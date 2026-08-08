@@ -29,14 +29,25 @@
 | **边说边匹配**（Python `match-text`，阈值 ≥ **90%**） | 已满足 |
 | **同音容错**（字形 + 拼音 TONE3 取高分） | 已满足 |
 | **判定通过后立即停止转写**，后续语音不再继续识别 | 已满足 |
-| 答案库本地 JSON（一题唯一标准答案） | 已满足 |
+| 答案库本地 JSON（一题唯一标准答案）· 路径见下 | 已满足 |
 
 配套：
 
+- **答案库（移植必读）：`python/data/answers.json`**（说明见 `python/data/README.md`）
 - 规格：`docs/SPEC-speech-answer.md`
 - 意图：`docs/intent/speech-answer-match.md`
 - Python：`python/speech_answer/` · API：`/api/speech/questions`、`/api/speech/match-text`
 - 离线对照页：`speech.html`（本机 Whisper，不作为本 V1.0 基线）
+
+### 答案库位置（换机也能找到）
+
+| 项 | 内容 |
+|----|------|
+| **正式文件** | `python/data/answers.json`（已进 Git，clone 后即有） |
+| **格式说明** | `python/data/README.md` |
+| **示例副本** | `python/data/answers.sample.json` |
+| **默认加载** | Python `server.py` 读 `answers.json`；可用环境变量 `SPEECH_ANSWERS_PATH` 覆盖 |
+| **改题后** | 编辑 JSON → **重启** uvicorn 后再打开语音页 |
 
 后续若做 V1.1+，在本记录下追加条目；**V1.0 基线不要改坏在线页主路径。**
 

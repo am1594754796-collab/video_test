@@ -1,8 +1,8 @@
 """CLI: offline listen-and-match demo.
 
 Usage:
-  python -m speech_answer.cli --answers data/answers.sample.json --question Q1 --seconds 5
-  python -m speech_answer.cli --answers data/answers.sample.json --question Q1 --text 北京
+  python -m speech_answer.cli --answers data/answers.json --question Q1 --seconds 5
+  python -m speech_answer.cli --answers data/answers.json --question Q1 --text 北京
 """
 
 from __future__ import annotations

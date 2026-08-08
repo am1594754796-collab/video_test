@@ -5,7 +5,8 @@ import pytest
 from speech_answer.answer_bank import AnswerBank, DuplicateQuestionIdError, UnknownQuestionIdError
 
 
-SAMPLE = Path(__file__).resolve().parents[1] / "data" / "answers.sample.json"
+SAMPLE = Path(__file__).resolve().parents[1] / "data" / "answers.json"
+
 
 
 def test_load_sample_and_get_answer():

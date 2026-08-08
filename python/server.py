@@ -30,8 +30,14 @@ app.add_middleware(
 )
 
 _ROOT = Path(__file__).resolve().parent
-_DEFAULT_ANSWERS = _ROOT / "data" / "answers.sample.json"
-_ANSWER_BANK_PATH = Path(os.environ.get("SPEECH_ANSWERS_PATH", str(_DEFAULT_ANSWERS)))
+_DEFAULT_ANSWERS = _ROOT / "data" / "answers.json"
+_SAMPLE_ANSWERS = _ROOT / "data" / "answers.sample.json"
+_ANSWER_BANK_PATH = Path(
+    os.environ.get(
+        "SPEECH_ANSWERS_PATH",
+        str(_DEFAULT_ANSWERS if _DEFAULT_ANSWERS.is_file() else _SAMPLE_ANSWERS),
+    )
+)
 _WHISPER_MODEL = os.environ.get("SPEECH_WHISPER_MODEL", "base")
 
 _bank: AnswerBank | None = None

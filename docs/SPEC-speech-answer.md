@@ -70,7 +70,9 @@ python/
     match_service.py              → 编排：听答 / 纯文本匹配
     cli.py                        → 命令行演示
   data/
-    answers.sample.json           → 示例答案库
+    answers.json                  → 【正式】答案库（进 Git，移植后默认加载）
+    answers.sample.json           → 示例副本（同结构）
+    README.md                     → 答案库路径与改题说明
   tests/
     test_answer_bank.py
     test_fuzzy_match.py

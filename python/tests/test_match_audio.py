@@ -4,7 +4,8 @@ from speech_answer.answer_bank import AnswerBank
 from speech_answer.match_service import match_audio_file
 
 
-SAMPLE = Path(__file__).resolve().parents[1] / "data" / "answers.sample.json"
+SAMPLE = Path(__file__).resolve().parents[1] / "data" / "answers.json"
+
 
 
 def test_match_audio_file_with_mock(tmp_path: Path):
