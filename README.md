@@ -5,8 +5,8 @@
 | 页面 | 地址 | 需要 | 说明 |
 |------|------|------|------|
 | 举手单人调试 | http://localhost:5173/ | Node.js | 调 margin / minFrames |
-| **人物编号快版（推荐）** | http://localhost:5173/people-fast.html | Node.js **+ Python** | ~20FPS，排序异步不阻塞 |
-| 人物编号原版 | http://localhost:5173/people.html | Node.js **+ Python** | ~10FPS，每帧等待 Python 排序 |
+| **人物编号快版（推荐）** | http://localhost:5173/people-fast.html | Node.js **+ Python** | ~20FPS 相机，**Python 同步排序** |
+| 人物编号原版 | http://localhost:5173/people.html | Node.js **+ Python** | ~10FPS，Python 同步排序 |
 
 不含计分 / 抢答流程（解耦在其他模块）。
 
@@ -104,7 +104,7 @@ npm.cmd run dev
 
 浏览器打开 http://localhost:5173/
 
-**人物编号快版（推荐，高帧率 + 异步排序）：**
+**人物编号快版（推荐，~20FPS 相机 + Python 同步排序）：**
 
 ```bat
 start-people-fast.bat
@@ -156,8 +156,8 @@ npm.cmd run dev
 | 脚本 | 作用 |
 |------|------|
 | `start.bat` / `start.ps1` | 举手单人调试 |
-| `start-people-fast.bat` | **推荐** 人物快版 + Python（~20FPS） |
-| `start-people.bat` | 人物原版 + Python（~10FPS） |
+| `start-people-fast.bat` | **推荐** 人物快版 + Python（~20FPS 同步排序） |
+| `start-people.bat` | 人物原版 + Python（~10FPS 同步排序） |
 
 ### PowerShell 报错「禁止运行脚本」
 
@@ -199,17 +199,17 @@ pydantic>=2.0.0
 
 人物页流程：
 
-1. 浏览器 MediaPipe 检出人物（最多 6，含去重）  
-2. **快版**：本帧立刻按躯干 x 左→右编号（与 Python 同规则），同时把坐标异步 POST 给 Python（不阻塞检测）  
-3. **原版**：每帧 `await` Python 排序后再刷新 UI（约 10FPS，网络慢时更易漏检）  
-4. 页面显示「当前人数」、编号、举手 / 最先举手；API 断开时快版仍可本地编号  
+1. 浏览器按目标帧率采样相机，MediaPipe 检出人物（最多 6，含去重）  
+2. 把本帧每人中心坐标 `{x,y}` **同步** POST 给 Python，等待左→右编号结果  
+3. 页面显示「当前人数」、编号、举手 / 最先举手；API 断开时暂用本地排序  
+4. 若上一帧排序尚未返回，跳过中间 rAF（避免重叠请求）  
 
 ### 快版 vs 原版
 
 | 项 | `people-fast.html`（推荐） | `people.html`（原版） |
 |----|---------------------------|----------------------|
-| 推理间隔 | **50ms ≈ 20FPS** | 100ms ≈ 10FPS |
-| 排序请求 | **异步合并队列**，不挡检测 | 每帧等待 HTTP |
+| 相机 / 推理目标间隔 | **50ms ≈ 20FPS** | 100ms ≈ 10FPS |
+| 排序请求 | **同步** `await` Python（与原版相同） | 同步 `await` Python |
 | 漏检容忍 | `maxMissed=24`（约 1.2s） | `maxMissed=12`（约 1.2s） |
 | 举手防抖 | 连续 5 帧 | 连续 4 帧 |
 | 检测置信度 | 略松（0.50 / 0.50 / 0.45） | 0.55 / 0.55 / 0.50 |
@@ -251,7 +251,7 @@ npm.cmd run lint
 
 ### 人物编号快版（推荐 · `/people-fast.html`）
 
-适合教室实机：减轻「人突然消失」、举手判定更跟手。
+适合教室实机：更高采样率（约 20FPS），编号仍走 Python **同步**接口。
 
 1. 运行 `start-people-fast.bat`（或手动开 Python API + `npm.cmd run dev`）  
 2. 打开 http://localhost:5173/people-fast.html  
@@ -261,13 +261,13 @@ npm.cmd run lint
 
 要点：
 
-- 检测循环约 **20FPS**，不因 Python 慢而卡住  
-- 实时编号用与 Python **相同的左→右规则**在本地完成；Python 在后台异步校验  
-- 状态栏会出现 `Python 异步 OK(N)` 表示排序服务正常  
+- 相机 / Pose 目标约 **20FPS**（间隔 50ms）  
+- 每一有效帧都会 **等待** Python `/api/people/sort` 返回后再刷新编号与竞态  
+- API 未连接或失败时，该帧回退本地左→右排序  
 
 ### 人物编号原版（`/people.html`）
 
-对照 / 调试用。每帧等待 Python 返回后再刷新，约 **10FPS**；网络或 API 卡顿时更容易漏检。
+对照用，约 **10FPS**，同样是 Python 同步排序。
 
 1. `start-people.bat` 或手动启动 API  
 2. 打开 http://localhost:5173/people.html  
@@ -316,7 +316,7 @@ video_test/
 
 2. **人物数量 + 左→右编号 + 最先举手**  
    - 原版：`people.html` + `src/app/people-board.ts`（约 10FPS，同步等 Python）  
-   - **快版：`people-fast.html` + `src/app/people-board-fast.ts`（约 20FPS，排序异步）**  
+   - **快版：`people-fast.html` + `src/app/people-board-fast.ts`（约 20FPS 相机，Python 同步排序）**  
    - `FirstRaiseTracker`：最先举手 +「下一轮」重置  
 
 3. **Python 排序服务**  
@@ -345,7 +345,7 @@ video_test/
 A: 用 `npm.cmd` 或 `start.bat`。
 
 **Q: 人物页显示 Python API 未连接**  
-A: 先开 `python` 下的 uvicorn，或重新运行 `start-people-fast.bat`；确认 8765 端口未被占用。快版在未连接时仍会本地编号，但状态栏会提示未连接。
+A: 先开 `python` 下的 uvicorn，或重新运行 `start-people-fast.bat`；确认 8765 端口未被占用。未连接时该帧会回退本地编号。
 
 **Q: `python` 命令不存在**  
 A: 用 winget 重装 Python 3.12，并勾选加入 PATH；或试用 `py -3 --version`。
@@ -354,10 +354,10 @@ A: 用 winget 重装 Python 3.12，并勾选加入 PATH；或试用 `py -3 --ver
 A: 使用 localhost；检查系统相机权限。
 
 **Q: 频闪 / 一人变两人 / 人突然消失**  
-A: 优先用 **快版** `people-fast.html`；保证上半身入画、光照均匀。举手页用单人模式；人物页已做躯干去重。
+A: 优先用 **快版** `people-fast.html`（更高采样）；保证上半身入画、光照均匀。举手页用单人模式；人物页已做躯干去重。
 
 **Q: 快版和原版选哪个？**  
-A: 实机推荐快版。原版适合对照「同步等 Python」时的行为。
+A: 实机推荐快版（~20FPS + 同步 Python）。原版为 ~10FPS 对照。
 
 **Q: 换电脑缺依赖**  
 A: 不要复制 `node_modules` / `.venv`；按本文「换机部署完整流程」从第 1 步做起。

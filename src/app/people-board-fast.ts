@@ -1,7 +1,7 @@
 /**
  * People board (fast path):
- * ~20 Hz MediaPipe loop; left→right numbering for UI/race is local & immediate.
- * Python sort runs async (coalesced) and never blocks detection.
+ * ~20 Hz MediaPipe camera loop + synchronous Python left→right sort each frame.
+ * If a sort is still in flight, later rAF ticks are skipped (no overlapping requests).
  */
 
 import { PoseLandmarker } from "@mediapipe/tasks-vision";
@@ -20,7 +20,7 @@ import {
 } from "../vision";
 import { POSE } from "../vision/detect/isHandRaised";
 
-/** ~20 FPS inference (was 100ms / ~10 FPS on people.html). */
+/** Target ~20 FPS camera / pose sampling (50ms). */
 const DETECT_INTERVAL_MS = 50;
 const RAISE_MARGIN = 0.08;
 
@@ -61,16 +61,13 @@ let raf = 0;
 let lastTs = 0;
 let canvasSized = false;
 let apiOk = false;
-/** Hold ~1.2s of misses at 20 Hz (was 12 @ 10 Hz). */
+/** Hold ~1.2s of misses at 20 Hz. */
 let tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 24, minFrames: 5 });
 let race = new FirstRaiseTracker();
 let lastUiKey = "";
 let lastWinnerKey = "";
-
-/** Latest Python sort (for status / optional cross-check); never awaited in the detect loop. */
-let lastPythonSort: SortResponse | null = null;
-let sortBusy = false;
-let sortQueued: PersonPoint[] | null = null;
+/** Prevent overlapping sync sort requests while targeting 20 FPS. */
+let frameBusy = false;
 
 function setStatus(text: string): void {
   statusEl.textContent = text;
@@ -119,7 +116,6 @@ async function sortViaPython(people: PersonPoint[]): Promise<SortResponse> {
   return (await res.json()) as SortResponse;
 }
 
-/** Same left→right rules as Python — used for realtime UI so detection never waits on HTTP. */
 function sortLocal(people: PersonPoint[]): SortResponse {
   const sorted = [...people].sort((a, b) => a.x - b.x).slice(0, 6);
   return {
@@ -131,33 +127,6 @@ function sortLocal(people: PersonPoint[]): SortResponse {
       id: p.id,
     })),
   };
-}
-
-/** Coalesce: keep only the newest payload; drain without blocking detect. */
-function enqueueSort(people: PersonPoint[]): void {
-  sortQueued = people;
-  if (!sortBusy) void pumpSort();
-}
-
-async function pumpSort(): Promise<void> {
-  sortBusy = true;
-  while (sortQueued) {
-    const payload = sortQueued;
-    sortQueued = null;
-    try {
-      if (!apiOk) await checkHealth();
-      if (apiOk) {
-        lastPythonSort = await sortViaPython(payload);
-        setApiStatus(true, "异步排序");
-      } else {
-        lastPythonSort = sortLocal(payload);
-      }
-    } catch {
-      lastPythonSort = sortLocal(payload);
-      setApiStatus(false, "请求失败，检测仍继续 · 本地编号");
-    }
-  }
-  sortBusy = false;
 }
 
 function attachRaised(
@@ -263,59 +232,68 @@ function drawOverlay(
   }
 }
 
-function loop(nowMs: number): void {
-  raf = requestAnimationFrame(loop);
+async function loop(nowMs: number): Promise<void> {
+  raf = requestAnimationFrame((t) => void loop(t));
   if (!landmarker || video.readyState < 2) return;
   if (!ensureCanvasSize()) return;
+  if (frameBusy) return;
   if (nowMs - lastTs < DETECT_INTERVAL_MS) return;
   lastTs = nowMs;
+  frameBusy = true;
 
-  const raw = detectPosesForVideo(landmarker, video, nowMs);
-  const poses = dedupePosesByTorso(raw, { minDistance: 0.14 });
-  const tracked = tracker.update(poses);
+  try {
+    const raw = detectPosesForVideo(landmarker, video, nowMs);
+    const poses = dedupePosesByTorso(raw, { minDistance: 0.14 });
+    const tracked = tracker.update(poses);
 
-  for (const t of tracked) {
-    if (!t.fresh) continue;
-    t.debouncer.update(isHandRaised(t.landmarks, { margin: RAISE_MARGIN }));
-  }
+    for (const t of tracked) {
+      if (!t.fresh) continue;
+      t.debouncer.update(isHandRaised(t.landmarks, { margin: RAISE_MARGIN }));
+    }
 
-  const payload = tracked.map((t) => ({
-    id: t.trackId,
-    x: torsoCenter(t.landmarks).x,
-    y: torsoCenter(t.landmarks).y,
-  }));
+    const payload = tracked.map((t) => ({
+      id: t.trackId,
+      x: torsoCenter(t.landmarks).x,
+      y: torsoCenter(t.landmarks).y,
+    }));
 
-  // Realtime path: never await HTTP. Same L→R rules as Python.
-  const sorted = sortLocal(payload);
-  enqueueSort(payload);
+    // Synchronous Python sort on this frame's 20FPS camera sample.
+    let sorted: SortResponse;
+    try {
+      if (!apiOk) await checkHealth();
+      sorted = apiOk ? await sortViaPython(payload) : sortLocal(payload);
+      if (apiOk) setApiStatus(true, "同步排序 · ~20FPS");
+    } catch {
+      setApiStatus(false, "请求失败，暂用本地排序");
+      sorted = sortLocal(payload);
+    }
 
-  const people = attachRaised(sorted.people, tracked);
-  const result: SortResponse = { count: sorted.count, people };
+    const people = attachRaised(sorted.people, tracked);
+    const result: SortResponse = { count: sorted.count, people };
 
-  race.update(
-    people.map((p) => ({ personIndex: p.index, raised: !!p.raised })),
-    nowMs,
-  );
-  const winner = race.winner;
-
-  renderHud(result, winner);
-  drawOverlay(tracked, people, winner);
-
-  const raisedIndexes = people.filter((p) => p.raised).map((p) => p.index);
-  const pyNote =
-    lastPythonSort != null && apiOk
-      ? ` · Python 异步 OK(${lastPythonSort.count})`
-      : "";
-  if (result.count === 0) {
-    setStatus(`未检测到人物 · ~20FPS${pyNote}`);
-  } else if (winner) {
-    setStatus(`最先举手：#${winner.personIndex} · 点「下一轮」可再赛${pyNote}`);
-  } else if (raisedIndexes.length === 0) {
-    setStatus(`检出 ${result.count} 人 · 等待举手…${pyNote}`);
-  } else {
-    setStatus(
-      `检出 ${result.count} 人 · 举手中：${raisedIndexes.map((n) => `#${n}`).join("、")}${pyNote}`,
+    race.update(
+      people.map((p) => ({ personIndex: p.index, raised: !!p.raised })),
+      nowMs,
     );
+    const winner = race.winner;
+
+    renderHud(result, winner);
+    drawOverlay(tracked, people, winner);
+
+    const raisedIndexes = people.filter((p) => p.raised).map((p) => p.index);
+    if (result.count === 0) {
+      setStatus("未检测到人物 · ~20FPS · Python 同步编号");
+    } else if (winner) {
+      setStatus(`最先举手：#${winner.personIndex} · 点「下一轮」可再赛`);
+    } else if (raisedIndexes.length === 0) {
+      setStatus(`检出 ${result.count} 人 · 等待举手…`);
+    } else {
+      setStatus(
+        `检出 ${result.count} 人 · 举手中：${raisedIndexes.map((n) => `#${n}`).join("、")}`,
+      );
+    }
+  } finally {
+    frameBusy = false;
   }
 }
 
@@ -333,17 +311,16 @@ async function onStart(): Promise<void> {
     camera = await startCamera(video);
     tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 24, minFrames: 5 });
     race = new FirstRaiseTracker();
-    lastPythonSort = null;
-    sortQueued = null;
+    frameBusy = false;
     lastTs = 0;
     lastUiKey = "";
     lastWinnerKey = "";
     canvasSized = false;
     btnStop.disabled = false;
     btnReset.disabled = false;
-    setStatus("运行中 · 快版 ~20FPS · 排序不阻塞");
+    setStatus("运行中 · ~20FPS 相机 · Python 同步排序");
     cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(loop);
+    raf = requestAnimationFrame((t) => void loop(t));
   } catch (err) {
     console.error(err);
     setStatus(err instanceof Error ? err.message : "启动失败");
@@ -361,8 +338,7 @@ function onStop(): void {
   landmarker = null;
   tracker.reset();
   race.reset();
-  sortQueued = null;
-  lastPythonSort = null;
+  frameBusy = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   lastUiKey = "";
   lastWinnerKey = "";
