@@ -9,6 +9,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         people: resolve(__dirname, "people.html"),
+        peopleFast: resolve(__dirname, "people-fast.html"),
       },
     },
   },

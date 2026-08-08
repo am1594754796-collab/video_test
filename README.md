@@ -1,11 +1,12 @@
 # 举手行为检测（视觉识别模块）
 
-教室场景视觉模块：**MediaPipe Pose** + 举手判定 + 人物数量 / 左→右编号。
+教室场景视觉模块：**MediaPipe Pose** + 举手判定 + 人物数量 / 左→右编号 + 最先举手。
 
-| 页面 | 地址 | 需要 |
-|------|------|------|
-| 举手单人调试 | http://localhost:5173/ | Node.js |
-| 人物数量 + 左→右编号 | http://localhost:5173/people.html | Node.js **+ Python** |
+| 页面 | 地址 | 需要 | 说明 |
+|------|------|------|------|
+| 举手单人调试 | http://localhost:5173/ | Node.js | 调 margin / minFrames |
+| **人物编号快版（推荐）** | http://localhost:5173/people-fast.html | Node.js **+ Python** | ~20FPS，排序异步不阻塞 |
+| 人物编号原版 | http://localhost:5173/people.html | Node.js **+ Python** | ~10FPS，每帧等待 Python 排序 |
 
 不含计分 / 抢答流程（解耦在其他模块）。
 
@@ -103,10 +104,10 @@ npm.cmd run dev
 
 浏览器打开 http://localhost:5173/
 
-**人物数量 + Python 左→右排序：**
+**人物编号快版（推荐，高帧率 + 异步排序）：**
 
 ```bat
-start-people.bat
+start-people-fast.bat
 ```
 
 该脚本会：
@@ -115,7 +116,15 @@ start-people.bat
 2. 必要时 `npm install`  
 3. 必要时创建 `python\.venv` 并安装 `requirements.txt`  
 4. 启动 `uvicorn`（`http://127.0.0.1:8765`）  
-5. 启动 Vite，并打开 http://localhost:5173/people.html  
+5. 启动 Vite，并打开 http://localhost:5173/people-fast.html  
+
+**人物编号原版（约 10FPS，每帧等 Python）：**
+
+```bat
+start-people.bat
+```
+
+打开 http://localhost:5173/people.html  
 
 #### 手动分两步启动（调试用）
 
@@ -132,7 +141,7 @@ cd python
 npm.cmd run dev
 ```
 
-浏览器打开 http://localhost:5173/people.html  
+浏览器打开 http://localhost:5173/people-fast.html（推荐）或 `/people.html`（原版）  
 页顶应显示 **Python API: 已连接**。
 
 ### 6. 相机权限
@@ -147,7 +156,8 @@ npm.cmd run dev
 | 脚本 | 作用 |
 |------|------|
 | `start.bat` / `start.ps1` | 举手单人调试 |
-| `start-people.bat` | 人物数量页 + Python 排序服务 |
+| `start-people-fast.bat` | **推荐** 人物快版 + Python（~20FPS） |
+| `start-people.bat` | 人物原版 + Python（~10FPS） |
 
 ### PowerShell 报错「禁止运行脚本」
 
@@ -190,9 +200,20 @@ pydantic>=2.0.0
 人物页流程：
 
 1. 浏览器 MediaPipe 检出人物（最多 6，含去重）  
-2. 把每人中心坐标 `{x,y}` POST 给 Python  
-3. Python 左→右排序并返回 `count` + `people[].index`  
-4. 页面显示「当前人数」与编号；API 断开时会暂用本地排序并提示未连接  
+2. **快版**：本帧立刻按躯干 x 左→右编号（与 Python 同规则），同时把坐标异步 POST 给 Python（不阻塞检测）  
+3. **原版**：每帧 `await` Python 排序后再刷新 UI（约 10FPS，网络慢时更易漏检）  
+4. 页面显示「当前人数」、编号、举手 / 最先举手；API 断开时快版仍可本地编号  
+
+### 快版 vs 原版
+
+| 项 | `people-fast.html`（推荐） | `people.html`（原版） |
+|----|---------------------------|----------------------|
+| 推理间隔 | **50ms ≈ 20FPS** | 100ms ≈ 10FPS |
+| 排序请求 | **异步合并队列**，不挡检测 | 每帧等待 HTTP |
+| 漏检容忍 | `maxMissed=24`（约 1.2s） | `maxMissed=12`（约 1.2s） |
+| 举手防抖 | 连续 5 帧 | 连续 4 帧 |
+| 检测置信度 | 略松（0.50 / 0.50 / 0.45） | 0.55 / 0.55 / 0.50 |
+| 启动脚本 | `start-people-fast.bat` | `start-people.bat` |
 
 ---
 
@@ -209,9 +230,9 @@ npm.cmd run lint
 
 | 命令 | 作用 |
 |------|------|
-| `npm.cmd run dev` | 开发预览（含 `/` 与 `/people.html`） |
+| `npm.cmd run dev` | 开发预览（`/`、`/people-fast.html`、`/people.html`） |
 | `npm.cmd test` | Vitest 前端单测 |
-| `npm.cmd run build` | 产出 `dist/`（含两页） |
+| `npm.cmd run build` | 产出 `dist/`（含三页） |
 
 ---
 
@@ -228,11 +249,31 @@ npm.cmd run lint
 | `margin` | `0.08` | 腕相对肩的高度边距（越大越不易误报） |
 | `minFrames` | `5` | 连续帧一致才翻转举手状态 |
 
-### 人物数量页（`/people.html`）
+### 人物编号快版（推荐 · `/people-fast.html`）
 
-1. 先保证 Python API 已启动（或用 `start-people.bat`）  
-2. 点 **打开相机**  
-3. 看「当前人数」与从左到右编号 1…N  
+适合教室实机：减轻「人突然消失」、举手判定更跟手。
+
+1. 运行 `start-people-fast.bat`（或手动开 Python API + `npm.cmd run dev`）  
+2. 打开 http://localhost:5173/people-fast.html  
+3. 点 **打开相机**；上半身入画、光线尽量均匀  
+4. 看「当前人数」、左→右编号；举手后防抖确认，**最先举手**会闪烁  
+5. 点 **下一轮** 清空赢家再赛  
+
+要点：
+
+- 检测循环约 **20FPS**，不因 Python 慢而卡住  
+- 实时编号用与 Python **相同的左→右规则**在本地完成；Python 在后台异步校验  
+- 状态栏会出现 `Python 异步 OK(N)` 表示排序服务正常  
+
+### 人物编号原版（`/people.html`）
+
+对照 / 调试用。每帧等待 Python 返回后再刷新，约 **10FPS**；网络或 API 卡顿时更容易漏检。
+
+1. `start-people.bat` 或手动启动 API  
+2. 打开 http://localhost:5173/people.html  
+3. 操作同快版（打开相机 → 举手 → 下一轮）  
+
+页内可点「改用快版」跳转。
 
 ---
 
@@ -240,14 +281,19 @@ npm.cmd run lint
 
 ```
 video_test/
-  start.bat / start.ps1     ← 举手单人一键启动
-  start-people.bat          ← 人物页 + Python API
-  index.html                ← 举手单人调试
-  people.html               ← 人物数量独立页
+  start.bat / start.ps1      ← 举手单人一键启动
+  start-people-fast.bat      ← 人物快版 + Python（推荐）
+  start-people.bat           ← 人物原版 + Python
+  index.html                 ← 举手单人调试
+  people-fast.html           ← 人物编号快版（~20FPS）
+  people.html                ← 人物编号原版（~10FPS）
   package.json
-  vite.config.ts            ← 含 /api 代理到 :8765
-  src/vision/               ← MediaPipe / 举手 / 去重 / 追踪
-  src/app/                  ← 两个前端页面逻辑
+  vite.config.ts             ← 含 /api 代理到 :8765
+  src/vision/                ← MediaPipe / 举手 / 去重 / 追踪 / 最先举手
+  src/app/
+    people-board-fast.ts     ← 快版逻辑
+    people-board.ts          ← 原版逻辑
+    people-board.css
   python/
     requirements.txt
     sort_people.py
@@ -268,9 +314,10 @@ video_test/
    - 单人调试默认 `numPoses=1`，减轻一人双框 / 频闪  
    - 举手规则：腕高于肩 + 连续帧防抖  
 
-2. **人物数量 + 左→右编号（新独立页）**  
-   - `people.html` + `src/app/people-board.ts`  
-   - 检测人数；编号排序由 **Python** 完成  
+2. **人物数量 + 左→右编号 + 最先举手**  
+   - 原版：`people.html` + `src/app/people-board.ts`（约 10FPS，同步等 Python）  
+   - **快版：`people-fast.html` + `src/app/people-board-fast.ts`（约 20FPS，排序异步）**  
+   - `FirstRaiseTracker`：最先举手 +「下一轮」重置  
 
 3. **Python 排序服务**  
    - 虚拟环境 `.venv` + `requirements.txt`  
@@ -279,7 +326,8 @@ video_test/
 
 4. **启动脚本**  
    - `start.bat`：仅前端举手页  
-   - `start-people.bat`：前端 + 自动准备/启动 Python  
+   - `start-people-fast.bat`：快版 + Python（推荐）  
+   - `start-people.bat`：原版 + Python  
 
 5. **仓库**  
    - 已推送：https://github.com/am1594754796-collab/video_test  
@@ -297,7 +345,7 @@ video_test/
 A: 用 `npm.cmd` 或 `start.bat`。
 
 **Q: 人物页显示 Python API 未连接**  
-A: 先开 `python` 下的 uvicorn，或重新运行 `start-people.bat`；确认 8765 端口未被占用。
+A: 先开 `python` 下的 uvicorn，或重新运行 `start-people-fast.bat`；确认 8765 端口未被占用。快版在未连接时仍会本地编号，但状态栏会提示未连接。
 
 **Q: `python` 命令不存在**  
 A: 用 winget 重装 Python 3.12，并勾选加入 PATH；或试用 `py -3 --version`。
@@ -305,8 +353,11 @@ A: 用 winget 重装 Python 3.12，并勾选加入 PATH；或试用 `py -3 --ver
 **Q: 打不开相机**  
 A: 使用 localhost；检查系统相机权限。
 
-**Q: 频闪 / 一人变两人**  
-A: 举手页用单人模式；人物页已做躯干去重。仍不稳时改善光照、保证上半身入画。
+**Q: 频闪 / 一人变两人 / 人突然消失**  
+A: 优先用 **快版** `people-fast.html`；保证上半身入画、光照均匀。举手页用单人模式；人物页已做躯干去重。
+
+**Q: 快版和原版选哪个？**  
+A: 实机推荐快版。原版适合对照「同步等 Python」时的行为。
 
 **Q: 换电脑缺依赖**  
 A: 不要复制 `node_modules` / `.venv`；按本文「换机部署完整流程」从第 1 步做起。
