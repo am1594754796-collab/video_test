@@ -1,6 +1,7 @@
 /**
  * Independent people board:
- * MediaPipe detects persons → Python API sorts left→right → UI shows count + indices.
+ * MediaPipe detects persons → Python API sorts left→right → hand-raise per person
+ * → FirstRaiseTracker picks earliest raise → UI flashes winner until reset.
  */
 
 import { PoseLandmarker } from "@mediapipe/tasks-vision";
@@ -8,18 +9,25 @@ import {
   createPoseLandmarker,
   dedupePosesByTorso,
   detectPosesForVideo,
+  FirstRaiseTracker,
+  isHandRaised,
   PoseTracker,
   startCamera,
   torsoCenter,
   type CameraHandle,
+  type FirstRaiseEvent,
+  type TrackedPose,
 } from "../vision";
 import { POSE } from "../vision/detect/isHandRaised";
+
+const RAISE_MARGIN = 0.08;
 
 type SortedPerson = {
   index: number;
   x: number;
   y: number;
   id?: string | number | null;
+  raised?: boolean;
 };
 
 type SortResponse = {
@@ -33,9 +41,12 @@ const ctx = canvas.getContext("2d")!;
 const statusEl = document.querySelector<HTMLElement>("#status")!;
 const apiStatusEl = document.querySelector<HTMLElement>("#api-status")!;
 const countEl = document.querySelector<HTMLElement>("#count-value")!;
+const winnerCard = document.querySelector<HTMLElement>("#winner-card")!;
+const winnerValue = document.querySelector<HTMLElement>("#winner-value")!;
 const listEl = document.querySelector<HTMLOListElement>("#number-list")!;
 const btnStart = document.querySelector<HTMLButtonElement>("#btn-start")!;
 const btnStop = document.querySelector<HTMLButtonElement>("#btn-stop")!;
+const btnReset = document.querySelector<HTMLButtonElement>("#btn-reset")!;
 
 const SORT_URL = "/api/people/sort";
 const HEALTH_URL = "/api/health";
@@ -46,8 +57,10 @@ let raf = 0;
 let lastTs = 0;
 let canvasSized = false;
 let apiOk = false;
-let tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 12, minFrames: 3 });
+let tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 12, minFrames: 4 });
+let race = new FirstRaiseTracker();
 let lastUiKey = "";
+let lastWinnerKey = "";
 
 function setStatus(text: string): void {
   statusEl.textContent = text;
@@ -112,30 +125,80 @@ function sortLocal(people: { id: number; x: number; y: number }[]): SortResponse
   };
 }
 
-function renderHud(result: SortResponse): void {
-  const key = `${result.count}:${result.people.map((p) => p.index).join(",")}`;
-  if (key === lastUiKey) return;
-  lastUiKey = key;
+function attachRaised(
+  numbered: SortedPerson[],
+  tracked: TrackedPose[],
+): SortedPerson[] {
+  return numbered.map((p) => {
+    let best: TrackedPose | null = null;
+    let bestD = Infinity;
+    for (const t of tracked) {
+      const d = Math.hypot(t.center.x - p.x, t.center.y - p.y);
+      if (d < bestD) {
+        bestD = d;
+        best = t;
+      }
+    }
+    return { ...p, raised: best?.debouncer.raised ?? false };
+  });
+}
+
+function renderWinner(winner: FirstRaiseEvent | null): void {
+  const key = winner ? String(winner.personIndex) : "";
+  if (key === lastWinnerKey) return;
+  lastWinnerKey = key;
+
+  if (winner) {
+    winnerValue.textContent = `#${winner.personIndex}`;
+    winnerCard.classList.add("has-winner");
+    // Retrigger CSS flash when a new winner is set.
+    winnerValue.style.animation = "none";
+    void winnerValue.offsetWidth;
+    winnerValue.style.animation = "";
+  } else {
+    winnerValue.textContent = "—";
+    winnerCard.classList.remove("has-winner");
+    winnerValue.style.animation = "";
+  }
+}
+
+function renderHud(result: SortResponse, winner: FirstRaiseEvent | null): void {
+  const key = result.people
+    .map((p) => `${p.index}:${p.raised ? 1 : 0}`)
+    .join(",");
+  const fullKey = `${result.count}:${key}:w${winner?.personIndex ?? "-"}`;
+  if (fullKey === lastUiKey) return;
+  lastUiKey = fullKey;
 
   countEl.textContent = String(result.count);
   listEl.innerHTML = "";
   for (const p of result.people) {
     const li = document.createElement("li");
-    li.textContent = String(p.index);
-    li.title = `x=${p.x.toFixed(3)}`;
+    const isWinner = winner?.personIndex === p.index;
+    if (isWinner) {
+      li.textContent = `${p.index} 最先`;
+    } else if (p.raised) {
+      li.textContent = `${p.index} 举手`;
+    } else {
+      li.textContent = String(p.index);
+    }
+    li.title = `x=${p.x.toFixed(3)}${p.raised ? " · raised" : ""}${isWinner ? " · first" : ""}`;
+    li.classList.toggle("raised", !!p.raised && !isWinner);
+    li.classList.toggle("winner", isWinner);
     listEl.appendChild(li);
   }
+  renderWinner(winner);
 }
 
 function drawOverlay(
-  tracked: { landmarks: readonly { x: number; y: number }[]; center: { x: number; y: number } }[],
+  tracked: TrackedPose[],
   numbered: SortedPerson[],
+  winner: FirstRaiseEvent | null,
 ): void {
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  // Map track centers to nearest sorted index for labels.
   for (const t of tracked) {
     let best: SortedPerson | null = null;
     let bestD = Infinity;
@@ -147,19 +210,22 @@ function drawOverlay(
       }
     }
     const label = best?.index ?? "?";
+    const isWinner = winner != null && best?.index === winner.personIndex;
+    const raised = t.debouncer.raised;
     const ls = t.landmarks[POSE.LEFT_SHOULDER];
     const rs = t.landmarks[POSE.RIGHT_SHOULDER];
     if (ls && rs) {
-      ctx.strokeStyle = "#3d9cfd";
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = isWinner ? "#f0b429" : raised ? "#2dd4a8" : "#3d9cfd";
+      ctx.lineWidth = isWinner ? 5 : 3;
       ctx.beginPath();
       ctx.moveTo(ls.x * w, ls.y * h);
       ctx.lineTo(rs.x * w, rs.y * h);
       ctx.stroke();
     }
-    ctx.fillStyle = "#e7ecf1";
+    ctx.fillStyle = isWinner ? "#f0b429" : raised ? "#2dd4a8" : "#e7ecf1";
     ctx.font = "bold 28px Segoe UI, sans-serif";
-    ctx.fillText(`#${label}`, t.center.x * w - 14, t.center.y * h - 16);
+    const text = isWinner ? `#${label} 最先` : raised ? `#${label} 举手` : `#${label}`;
+    ctx.fillText(text, t.center.x * w - 14, t.center.y * h - 16);
   }
 }
 
@@ -174,33 +240,51 @@ async function loop(nowMs: number): Promise<void> {
   const poses = dedupePosesByTorso(raw, { minDistance: 0.14 });
   const tracked = tracker.update(poses);
 
+  for (const t of tracked) {
+    if (!t.fresh) continue;
+    t.debouncer.update(isHandRaised(t.landmarks, { margin: RAISE_MARGIN }));
+  }
+
   const payload = tracked.map((t) => ({
     id: t.trackId,
     x: torsoCenter(t.landmarks).x,
     y: torsoCenter(t.landmarks).y,
   }));
 
-  let result: SortResponse;
+  let sorted: SortResponse;
   try {
     if (!apiOk) await checkHealth();
-    result = apiOk ? await sortViaPython(payload) : sortLocal(payload);
+    sorted = apiOk ? await sortViaPython(payload) : sortLocal(payload);
     if (apiOk) setApiStatus(true, "排序中");
   } catch {
     setApiStatus(false, "请求失败，暂用本地排序");
-    result = sortLocal(payload);
+    sorted = sortLocal(payload);
   }
 
-  renderHud(result);
-  drawOverlay(
-    tracked.map((t) => ({ landmarks: t.landmarks, center: t.center })),
-    result.people,
-  );
+  const people = attachRaised(sorted.people, tracked);
+  const result: SortResponse = { count: sorted.count, people };
 
-  setStatus(
-    result.count === 0
-      ? "未检测到人物"
-      : `检出 ${result.count} 人 · 已按左→右编号 1–${result.count}`,
+  race.update(
+    people.map((p) => ({ personIndex: p.index, raised: !!p.raised })),
+    nowMs,
   );
+  const winner = race.winner;
+
+  renderHud(result, winner);
+  drawOverlay(tracked, people, winner);
+
+  const raisedIndexes = people.filter((p) => p.raised).map((p) => p.index);
+  if (result.count === 0) {
+    setStatus("未检测到人物");
+  } else if (winner) {
+    setStatus(`最先举手：#${winner.personIndex} · 点「下一轮」可再赛`);
+  } else if (raisedIndexes.length === 0) {
+    setStatus(`检出 ${result.count} 人 · 等待举手…`);
+  } else {
+    setStatus(
+      `检出 ${result.count} 人 · 举手中：${raisedIndexes.map((n) => `#${n}`).join("、")}（防抖确认中）`,
+    );
+  }
 }
 
 async function onStart(): Promise<void> {
@@ -215,12 +299,15 @@ async function onStart(): Promise<void> {
       minTrackingConfidence: 0.5,
     });
     camera = await startCamera(video);
-    tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 12, minFrames: 3 });
+    tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 12, minFrames: 4 });
+    race = new FirstRaiseTracker();
     lastTs = 0;
     lastUiKey = "";
+    lastWinnerKey = "";
     canvasSized = false;
     btnStop.disabled = false;
-    setStatus("运行中");
+    btnReset.disabled = false;
+    setStatus("运行中 · 等待最先举手");
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame((t) => void loop(t));
   } catch (err) {
@@ -239,13 +326,26 @@ function onStop(): void {
   landmarker?.close();
   landmarker = null;
   tracker.reset();
+  race.reset();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  renderHud({ count: 0, people: [] });
+  lastUiKey = "";
+  lastWinnerKey = "";
+  renderHud({ count: 0, people: [] }, null);
   btnStart.disabled = false;
   btnStop.disabled = true;
+  btnReset.disabled = true;
   setStatus("已停止");
+}
+
+function onReset(): void {
+  race.reset();
+  lastUiKey = "";
+  lastWinnerKey = "";
+  renderWinner(null);
+  setStatus("已重置 · 等待最先举手");
 }
 
 btnStart.addEventListener("click", () => void onStart());
 btnStop.addEventListener("click", onStop);
+btnReset.addEventListener("click", onReset);
 void checkHealth();

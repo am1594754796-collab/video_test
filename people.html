@@ -3,15 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>人物数量 · 左到右编号</title>
+    <title>人物编号 · 最先举手</title>
     <link rel="stylesheet" href="/src/app/people-board.css" />
   </head>
   <body>
     <main class="app">
       <header>
-        <h1>人物数量检测</h1>
+        <h1>人物编号 · 最先举手</h1>
         <p class="sub">
-          独立页面 · MediaPipe 检出人数 · Python 左→右排序编号
+          MediaPipe 检出 · Python 左→右编号 · 最先举手闪烁
           · <a href="/">返回举手调试</a>
         </p>
       </header>
@@ -19,6 +19,7 @@
       <section class="controls">
         <button type="button" id="btn-start">打开相机</button>
         <button type="button" id="btn-stop" disabled>关闭</button>
+        <button type="button" id="btn-reset" class="secondary" disabled>下一轮</button>
         <span id="api-status" class="api-status">Python API: 未连接</span>
       </section>
 
@@ -26,6 +27,10 @@
         <div class="count-card">
           <div class="count-label">当前人数</div>
           <div id="count-value" class="count-value">0</div>
+        </div>
+        <div class="winner-card" id="winner-card">
+          <div class="count-label">最先举手</div>
+          <div id="winner-value" class="winner-value">—</div>
         </div>
         <ol id="number-list" class="number-list"></ol>
       </section>

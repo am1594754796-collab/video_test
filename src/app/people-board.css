@@ -4,6 +4,7 @@
   --muted: #8b98a5;
   --accent: #3d9cfd;
   --ok: #2dd4a8;
+  --raised: #2dd4a8;
   --warn: #f0b429;
   --idle: #3a4550;
 }
@@ -124,6 +125,62 @@ button:disabled {
   color: #061018;
   font-weight: 750;
   font-size: 1.25rem;
+}
+
+button.secondary {
+  background: #2a3540;
+  color: var(--fg);
+}
+
+button.secondary:disabled {
+  opacity: 0.45;
+}
+
+.winner-card {
+  min-width: 140px;
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  background: #1a222b;
+  border: 1px solid var(--idle);
+}
+
+.winner-card.has-winner {
+  border-color: var(--raised);
+}
+
+.winner-value {
+  font-size: 3rem;
+  font-weight: 750;
+  line-height: 1.1;
+  margin-top: 0.25rem;
+  color: var(--muted);
+}
+
+.winner-card.has-winner .winner-value {
+  color: var(--raised);
+  animation: winner-flash 0.7s ease-in-out 6;
+}
+
+@keyframes winner-flash {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.number-list li.winner {
+  background: var(--raised);
+  color: #062419;
+  animation: winner-flash 0.7s ease-in-out 6;
+}
+
+.number-list li.raised {
+  background: var(--raised);
+  color: #062419;
+  box-shadow: 0 0 0 2px rgba(45, 212, 168, 0.35);
 }
 
 .status {

@@ -8,6 +8,11 @@ export { RaiseDebouncer, type RaiseDebouncerOptions } from "./detect/raiseDeboun
 export { dedupePosesByTorso, torsoCenter, type DedupeOptions } from "./detect/dedupePoses";
 export { PoseTracker, type TrackedPose, type PoseTrackerOptions } from "./detect/poseTracker";
 export {
+  FirstRaiseTracker,
+  type FirstRaiseEvent,
+  type RaiseObservation,
+} from "./detect/firstRaiseTracker";
+export {
   createPoseLandmarker,
   detectPosesForVideo,
   DEFAULT_MODEL_URL,
