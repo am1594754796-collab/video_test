@@ -1,21 +1,49 @@
-# 答案库（随仓库移植）
+# 答案库（自己配置 · 相对路径指向）
 
-教室语音作答使用的**本地 JSON 答案库**在本目录，已纳入 Git，换机 `git clone` 后即可直接使用。
+本目录存放**可自行编辑**的题目/答案 JSON。使用时用**相对 `python/` 的路径**指向目标文件。
 
-## 正式文件（默认加载）
+## 给你改的文件
 
 | 文件 | 说明 |
 |------|------|
-| **`answers.json`** | **正式答案库**。Python API / 网页默认读这个文件。改题、改答案只改它，并提交到 Git。 |
-| `answers.sample.json` | 示例副本（与正式文件同结构）。可对照格式；缺省时也可作回退。 |
+| **`answers.json`** | **默认答案库**。直接改这里的 `id` / `answer`。 |
+| **`answers.path`** | 一行相对路径，决定启动时加载哪个 JSON（可改成别的库）。 |
+| `answers.sample.json` | 格式示例，可复制成 `week1.json` 等再改。 |
 
-完整路径（相对仓库根目录）：
+## 相对路径怎么写
 
-```
-python/data/answers.json
-```
+一律相对 **`python/`** 目录（不是仓库根目录）：
 
-## 格式
+| 你想用的文件 | 相对路径写法 |
+|--------------|--------------|
+| `python/data/answers.json` | `data/answers.json` |
+| `python/data/week1.json` | `data/week1.json` |
+
+### 三种用法（任选）
+
+1. **改 `answers.path`**（推荐，持久）  
+   打开 `answers.path`，把路径改成例如：
+   ```
+   data/week1.json
+   ```
+   重启 Python API 后生效。
+
+2. **网页输入框**  
+   语音页填相对路径 → 点「加载答案库」（会写入 `answers.path`）。
+
+3. **环境变量**  
+   ```bat
+   set SPEECH_ANSWERS_PATH=data/week1.json
+   ```
+   （在 `python/` 下启动 uvicorn 时生效；可为相对或绝对路径。）
+
+4. **CLI**  
+   ```bat
+   cd python
+   .venv\Scripts\python.exe -m speech_answer.cli --answers data/answers.json --question Q1 --text 北京
+   ```
+
+## JSON 格式（自己加题）
 
 ```json
 {
@@ -26,19 +54,22 @@ python/data/answers.json
 }
 ```
 
-- `id`：题目编号（网页下拉 / API 的 `question_id`），须唯一  
-- `answer`：该题**唯一**标准答案（字符串）  
-- 匹配：≥90% 模糊相似，含同音（拼音）容错  
+- `id`：题号（网页下拉 / API `question_id`），须唯一  
+- `answer`：该题唯一标准答案  
+- 匹配 ≥90%，含同音容错  
 
-## 换机后怎么用
+改完 JSON 后：若 API 已在跑，在网页再点一次「加载答案库」，或重启 uvicorn。
 
-1. `git clone` 本仓库（不要只拷 `node_modules` / `.venv`）  
-2. 确认存在：`python/data/answers.json`  
-3. 按需编辑该文件后，启动 `start-speech-online.bat`（或 `start-speech.bat`）  
-4. 网页选题来自该文件；改完需**重启 Python API**（`uvicorn`）才会重新加载  
+## 线上语义判分（整句）
 
-可选：用环境变量指向别的文件（一般不需要）：
+复制 `online.env.example` → `online.env`，填入 `SPEECH_LLM_API_KEY`。  
+默认走通义兼容接口，用大模型判断「学生说法是否答对标准答案」。
 
-```bat
-set SPEECH_ANSWERS_PATH=E:\path\to\answers.json
+## 换机移植
+
+`git clone` 后本目录会一起带走。确认存在：
+
+```
+python/data/answers.json
+python/data/answers.path
 ```

@@ -18,13 +18,27 @@
         </p>
       </header>
 
+      <section class="controls bank-controls">
+        <label class="field field-wide">
+          答案库相对路径（相对 python/）
+          <input
+            id="answers-path"
+            type="text"
+            value="data/answers.json"
+            spellcheck="false"
+            autocomplete="off"
+          />
+        </label>
+        <button type="button" id="btn-load-bank" class="secondary">加载答案库</button>
+        <span id="api-status" class="api-status">Python API: 检查中…</span>
+      </section>
+
       <section class="controls">
         <label class="field">
           当前题目
           <select id="question-select"></select>
         </label>
         <button type="button" id="btn-record">按下开始录音</button>
-        <span id="api-status" class="api-status">Python API: 检查中…</span>
       </section>
 
       <p id="status" class="status" role="status">请选择题目，按下按钮后开始录音</p>

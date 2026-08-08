@@ -6,9 +6,14 @@ type MatchResponse = {
   expected: string;
   score: number;
   passed: boolean;
+  score_char?: number;
+  score_pinyin?: number;
+  score_semantic?: number | null;
 };
 
 const questionSelect = document.querySelector<HTMLSelectElement>("#question-select")!;
+const answersPathInput = document.querySelector<HTMLInputElement>("#answers-path")!;
+const btnLoadBank = document.querySelector<HTMLButtonElement>("#btn-load-bank")!;
 const btnRecord = document.querySelector<HTMLButtonElement>("#btn-record")!;
 const apiStatus = document.querySelector<HTMLElement>("#api-status")!;
 const statusEl = document.querySelector<HTMLElement>("#status")!;
@@ -48,7 +53,17 @@ function extensionForMime(mime: string): string {
 function showResult(r: MatchResponse): void {
   outTranscript.textContent = r.transcript || "（空）";
   outExpected.textContent = r.expected;
-  outScore.textContent = `${(r.score * 100).toFixed(1)}%`;
+  const parts = [`总分 ${(r.score * 100).toFixed(1)}%`];
+  if (typeof r.score_char === "number") {
+    parts.push(`字形 ${(r.score_char * 100).toFixed(0)}%`);
+  }
+  if (typeof r.score_pinyin === "number") {
+    parts.push(`拼音 ${(r.score_pinyin * 100).toFixed(0)}%`);
+  }
+  if (typeof r.score_semantic === "number") {
+    parts.push(`语义 ${(r.score_semantic * 100).toFixed(0)}%`);
+  }
+  outScore.textContent = parts.join(" · ");
   outPassed.textContent = r.passed ? "通过" : "未通过";
   outPassed.className = `pill ${r.passed ? "ok" : "bad"}`;
 }
@@ -70,7 +85,13 @@ async function refreshHealth(): Promise<boolean> {
 async function loadQuestions(): Promise<void> {
   const res = await fetch("/api/speech/questions");
   if (!res.ok) throw new Error(`questions ${res.status}`);
-  const data = (await res.json()) as { questions: Question[] };
+  const data = (await res.json()) as {
+    questions: Question[];
+    relative_path?: string;
+  };
+  if (data.relative_path) {
+    answersPathInput.value = data.relative_path.replace(/\\/g, "/");
+  }
   questionSelect.innerHTML = "";
   for (const q of data.questions) {
     const opt = document.createElement("option");
@@ -81,6 +102,56 @@ async function loadQuestions(): Promise<void> {
   if (data.questions.length === 0) {
     setStatus("答案库为空");
     btnRecord.disabled = true;
+  } else {
+    btnRecord.disabled = false;
+  }
+}
+
+async function loadAnswerBankFromInput(): Promise<void> {
+  const path = answersPathInput.value.trim();
+  if (!path) {
+    setStatus("请填写答案库相对路径，例如 data/answers.json");
+    return;
+  }
+  setStatus(`加载答案库：${path} …`);
+  btnLoadBank.disabled = true;
+  try {
+    const res = await fetch("/api/speech/bank", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, persist: true }),
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      relative_path?: string;
+      questions?: Question[];
+      detail?: string;
+    };
+    if (!res.ok) {
+      throw new Error(body.detail || `HTTP ${res.status}`);
+    }
+    if (body.relative_path) {
+      answersPathInput.value = body.relative_path.replace(/\\/g, "/");
+    }
+    questionSelect.innerHTML = "";
+    for (const q of body.questions ?? []) {
+      const opt = document.createElement("option");
+      opt.value = q.id;
+      opt.textContent = `${q.id} · 答案：${q.answer}`;
+      questionSelect.appendChild(opt);
+    }
+    const n = body.questions?.length ?? 0;
+    btnRecord.disabled = n === 0;
+    setStatus(
+      n > 0
+        ? `已加载 ${answersPathInput.value}（${n} 题）`
+        : "答案库为空",
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    setStatus(`加载答案库失败：${msg}`);
+    btnRecord.disabled = true;
+  } finally {
+    btnLoadBank.disabled = false;
   }
 }
 
@@ -167,6 +238,10 @@ async function stopAndMatch(): Promise<void> {
   }
 }
 
+btnLoadBank.addEventListener("click", () => {
+  void loadAnswerBankFromInput();
+});
+
 btnRecord.addEventListener("click", async () => {
   if (recording) {
     await stopAndMatch();
@@ -189,7 +264,9 @@ async function boot(): Promise<void> {
   }
   try {
     await loadQuestions();
-    setStatus("请选择题目，按下按钮后开始录音");
+    setStatus(
+      `答案库：${answersPathInput.value} · 选题后按下录音（可改相对路径后点「加载答案库」）`,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     setStatus(`加载题目失败：${msg}`);

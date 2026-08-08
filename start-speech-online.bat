@@ -37,6 +37,12 @@ if not exist "python\.venv\" (
 )
 
 echo.
+echo 答案库相对路径: 见 python\data\answers.path （默认 data/answers.json）
+if exist "python\data\online.env" (
+  echo 线上语义: 已检测到 python\data\online.env
+) else (
+  echo 线上语义: 复制 python\data\online.env.example 为 online.env 并填入 SPEECH_LLM_API_KEY
+)
 echo 启动 Python API : http://127.0.0.1:8765
 start "speech-api" cmd /c "cd /d "%~dp0python" && .venv\Scripts\uvicorn.exe server:app --host 127.0.0.1 --port 8765"
 

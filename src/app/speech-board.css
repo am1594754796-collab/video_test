@@ -67,6 +67,31 @@ header h1 {
   color: var(--fg);
 }
 
+.field-wide {
+  flex: 1 1 18rem;
+}
+
+.field input[type="text"] {
+  min-width: 16rem;
+  width: 100%;
+  padding: 0.45rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--idle);
+  background: #1a222b;
+  color: var(--fg);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+.bank-controls {
+  margin-bottom: 0.35rem;
+}
+
+button.secondary {
+  background: #2a3642;
+  color: var(--fg);
+}
+
 button {
   border: 0;
   border-radius: 8px;

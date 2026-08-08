@@ -173,17 +173,16 @@ class MatchResult:
 
 ### Matching
 
-- `char_score = rapidfuzz.fuzz.ratio(norm(a), norm(b)) / 100.0`
-- `pinyin_score = rapidfuzz.fuzz.ratio(pinyin_TONE3(a), pinyin_TONE3(b)) / 100.0`
-- `score = max(char_score, pinyin_score)`（同音错字可过线）
-- `passed = score >= 0.90`
-- 拼音用 `pypinyin` `Style.TONE3`（带调号），减轻「北京 / 背景」这类不同调误判；不做语义向量。
+- `char_score` / `pinyin_score`：字形与拼音 TONE3 模糊比
+- `semantic_score`：默认 **auto**（有 `SPEECH_LLM_API_KEY` 走线上 LLM 判题；否则尝试本地 BGE）
+- 线上：`SPEECH_SEMANTIC_MODE=online` + `python/data/online.env`（见 `online.env.example`）
+- `score = max(char, pinyin, semantic?)`；`passed = score >= 0.90`
 
 ## Resolved decisions（定稿）
 
 1. **ASR：** `faster-whisper`，默认模型 `base`，`language="zh"`；权重本机缓存，离线推理。
 2. **录音：** `sounddevice`，默认固定约 5 秒（CLI 可配）。
-3. **匹配：** `max(字形 ratio, 拼音 TONE3 ratio)` → `[0,1]`；阈值 **0.90**；轻量归一化 + 同音容错。
+3. **匹配：** `max(字形, 拼音 TONE3, 本地语义 embedding)` → `[0,1]`；阈值 **0.90**；适合短答 + 整句解释。
 4. **答案库：** 本地 JSON（`id` + 唯一 `answer`）。
 5. **交付：** `python/speech_answer/` 库 API + CLI + pytest；网页：`speech.html`（离线 Whisper 录音上传）、`speech-online.html`（浏览器 Web Speech 在线听写 → `/api/speech/match-text`）；FastAPI 已挂载语音路由。
 6. **CI：** 只跑纯逻辑 / mock / match-text API 单测；不强制下载 Whisper、不跑真实麦克风。

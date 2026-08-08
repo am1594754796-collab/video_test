@@ -8,3 +8,5 @@ python/**/__pycache__/
 python/**/*.pyc
 python/.pytest_cache/
 .vite/
+python/data/online.env
+**/online.env

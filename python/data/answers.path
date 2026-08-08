@@ -1,0 +1,5 @@
+# Relative to python/ — change this line to switch which JSON answer bank is used.
+# Examples:
+#   data/answers.json
+#   data/week1.json
+data/answers.json

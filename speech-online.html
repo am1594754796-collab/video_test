@@ -11,11 +11,26 @@
       <header>
         <h1>语音作答 · 在线识别</h1>
         <p class="sub">
-          按下开始后实时转写并边说边匹配；<strong>一旦判定通过即停止转写</strong>
+          按下开始后实时转写并边说边匹配；<strong>限时 10s</strong>：通过即停，超时也停
           · <a href="/speech.html">离线 Whisper 版</a>
           · <a href="/people-fast.html">人物编号快版</a>
         </p>
       </header>
+
+      <section class="controls bank-controls">
+        <label class="field field-wide">
+          答案库相对路径（相对 python/）
+          <input
+            id="answers-path"
+            type="text"
+            value="data/answers.json"
+            spellcheck="false"
+            autocomplete="off"
+          />
+        </label>
+        <button type="button" id="btn-load-bank" class="secondary">加载答案库</button>
+        <span id="api-status" class="api-status">检查中…</span>
+      </section>
 
       <section class="controls">
         <label class="field">
@@ -23,7 +38,7 @@
           <select id="question-select"></select>
         </label>
         <button type="button" id="btn-record">按下开始识别</button>
-        <span id="api-status" class="api-status">检查中…</span>
+        <span id="countdown" class="api-status">限时 10s</span>
       </section>
 
       <p id="status" class="status" role="status">请选择题目，按下后开始在线听写</p>

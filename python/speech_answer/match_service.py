@@ -8,7 +8,7 @@ from typing import Callable
 from uuid import uuid4
 
 from speech_answer.answer_bank import AnswerBank
-from speech_answer.fuzzy_match import MATCH_THRESHOLD, fuzzy_score
+from speech_answer.fuzzy_match import MATCH_THRESHOLD, score_breakdown
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,9 @@ class MatchResult:
     expected: str
     score: float
     passed: bool
+    score_char: float = 0.0
+    score_pinyin: float = 0.0
+    score_semantic: float | None = None
 
 
 def match_text(
@@ -26,15 +29,19 @@ def match_text(
     transcript: str,
     *,
     threshold: float = MATCH_THRESHOLD,
+    use_semantic: bool | None = None,
 ) -> MatchResult:
     expected = bank.get_answer(question_id)
-    score = fuzzy_score(transcript, expected)
+    bd = score_breakdown(transcript, expected, use_semantic=use_semantic)
     return MatchResult(
         question_id=question_id,
         transcript=transcript,
         expected=expected,
-        score=score,
-        passed=score >= threshold,
+        score=bd["score"],
+        passed=bd["score"] >= threshold,
+        score_char=bd["char"],
+        score_pinyin=bd["pinyin"],
+        score_semantic=bd["semantic"],
     )
 
 

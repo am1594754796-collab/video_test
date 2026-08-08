@@ -7,3 +7,5 @@ sounddevice>=0.5.0
 numpy>=1.26.0
 faster-whisper>=1.0.0
 pypinyin>=0.51.0
+sentence-transformers>=3.0.0
+# torch is pulled by sentence-transformers; CPU wheel is fine for classroom PCs

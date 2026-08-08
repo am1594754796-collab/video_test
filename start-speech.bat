@@ -37,6 +37,7 @@ if not exist "python\.venv\" (
 )
 
 echo.
+echo 答案库相对路径: 见 python\data\answers.path （默认 data/answers.json）
 echo 启动 Python API : http://127.0.0.1:8765
 echo 提示: 首次语音识别会下载 Whisper 模型，请耐心等待
 start "speech-api" cmd /c "cd /d "%~dp0python" && set SPEECH_WHISPER_MODEL=base&& .venv\Scripts\uvicorn.exe server:app --host 127.0.0.1 --port 8765"

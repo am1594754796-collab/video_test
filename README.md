@@ -7,7 +7,7 @@
 | 举手单人调试 | http://localhost:5173/ | Node.js | 调 margin / minFrames |
 | **人物编号快版（推荐）· 视频解析 V1.0** | http://localhost:5173/people-fast.html | Node.js **+ Python** | 锁定编号 + 举手竞态 |
 | 人物编号原版 | http://localhost:5173/people.html | Node.js **+ Python** | ~10FPS，Python 同步排序 |
-| **语音作答 · 在线识别 V1.0（推荐）** | http://localhost:5173/speech-online.html | Node.js **+ Python** · **联网** · Chrome/Edge | 实时听写 + ≥90% / 同音匹配；通过即停 |
+| **语音作答 · 在线识别 V2.0（推荐）** | http://localhost:5173/speech-online.html | Node.js **+ Python** · **联网** · Chrome/Edge | 实时听写 + DeepSeek 语义 + 10s 限时；通过/超时即停 |
 | 语音作答 · 离线 Whisper | http://localhost:5173/speech.html | Node.js **+ Python** | 按下录音 → 上传 → 本机 Whisper |
 
 不含计分 / 抢答流程（解耦在其他模块）。
@@ -16,40 +16,104 @@
 
 ---
 
-## 版本记录 · 语音作答 · 在线识别 V1.0
+## 版本记录 · 语音识别 V2.0（当前）
 
-**当前里程碑：在线语音转换 / 作答匹配 V1.0（已满足需求）。**
+**当前里程碑：语音识别 V2.0（已满足本轮测试需求）。**
 
-以 **在线识别页**（`speech-online.html` / `start-speech-online.bat`）为准，能力已齐：
+以 **在线识别页**（`speech-online.html` / `start-speech-online.bat`）为准。相对 V1.0 新增：答案库相对路径切换、**DeepSeek 线上整句语义判分**、**10s 答题限时**（通过或超时均结束）。
 
 | 能力 | 状态 |
 |------|------|
-| 外部已选定当前题（下拉选题 / `question_id`） | 已满足 |
+| 外部已选定当前题（下拉 / `question_id`） | 已满足 |
+| 答案库 JSON **相对路径**指向（`data/answers.json` 等） | 已满足 |
 | **按下开始识别** 后 **实时转写**（Web Speech，`zh-CN`） | 已满足 |
-| **边说边匹配**（Python `match-text`，阈值 ≥ **90%**） | 已满足 |
-| **同音容错**（字形 + 拼音 TONE3 取高分） | 已满足 |
-| **判定通过后立即停止转写**，后续语音不再继续识别 | 已满足 |
-| 答案库本地 JSON（一题唯一标准答案）· 路径见下 | 已满足 |
+| **边说边匹配**（字形 + 拼音 + 语义，总分 ≥ **90%**） | 已满足 |
+| **同音容错**（拼音 TONE3） | 已满足 |
+| **整句语义 · 线上**（DeepSeek `deepseek-chat`，OpenAI 兼容接口） | 已满足 |
+| **限时 10s**：通过即停；超时自动结束并做最终匹配 | 已满足 |
+| 判定通过后停止转写，后续语音不再识别 | 已满足 |
 
-配套：
+配套文件：
 
-- **答案库（移植必读）：`python/data/answers.json`**（说明见 `python/data/README.md`）
-- 规格：`docs/SPEC-speech-answer.md`
-- 意图：`docs/intent/speech-answer-match.md`
-- Python：`python/speech_answer/` · API：`/api/speech/questions`、`/api/speech/match-text`
-- 离线对照页：`speech.html`（本机 Whisper，不作为本 V1.0 基线）
-
-### 答案库位置（换机也能找到）
-
-| 项 | 内容 |
+| 项 | 路径 |
 |----|------|
-| **正式文件** | `python/data/answers.json`（已进 Git，clone 后即有） |
-| **格式说明** | `python/data/README.md` |
-| **示例副本** | `python/data/answers.sample.json` |
-| **默认加载** | Python `server.py` 读 `answers.json`；可用环境变量 `SPEECH_ANSWERS_PATH` 覆盖 |
-| **改题后** | 编辑 JSON → **重启** uvicorn 后再打开语音页 |
+| 正式答案库 | `python/data/answers.json` |
+| 当前指向 | `python/data/answers.path`（相对 `python/`） |
+| 线上语义配置（含 Key，**不进 Git**） | `python/data/online.env` |
+| 配置模板 | `python/data/online.env.example` |
+| 说明 | `python/data/README.md` · 规格 `docs/SPEC-speech-answer.md` |
 
-后续若做 V1.1+，在本记录下追加条目；**V1.0 基线不要改坏在线页主路径。**
+### 如何配置到当前 V2.0 效果
+
+按顺序做即可在本机复现当前测试效果。
+
+#### 1. 依赖与启动
+
+```bat
+npm.cmd install
+cd python
+python -m venv .venv
+.venv\Scripts\pip.exe install -r requirements.txt
+cd ..
+start-speech-online.bat
+```
+
+或手动：终端 1 在 `python/` 启动 `uvicorn server:app --host 127.0.0.1 --port 8765`；终端 2 `npm run dev`；浏览器打开  
+http://localhost:5173/speech-online.html  
+
+需：**联网**、**Chrome / Edge**、麦克风权限。
+
+#### 2. 答案库（题目 / 标准答案）
+
+编辑 `python/data/answers.json`（一题唯一 `answer`），例如已含短答 Q1/Q2 与整句 Q3。
+
+默认指向由 `python/data/answers.path` 决定，内容为相对 **`python/`** 的路径，例如：
+
+```
+data/answers.json
+```
+
+网页上方也可改相对路径后点「加载答案库」。
+
+#### 3. DeepSeek 线上语义（整句解释）
+
+```bat
+copy python\data\online.env.example python\data\online.env
+```
+
+编辑 `python\data\online.env`（此文件已 gitignore，勿提交）：
+
+```
+SPEECH_SEMANTIC_MODE=online
+SPEECH_LLM_API_KEY=你的DeepSeek密钥
+SPEECH_LLM_BASE_URL=https://api.deepseek.com
+SPEECH_LLM_MODEL=deepseek-chat
+```
+
+保存后 **重启** uvicorn。匹配分会显示「字形 · 拼音 · 语义」；总分 = 三者最大，≥90% 判对。
+
+#### 4. 网页操作（与当前测试一致）
+
+1. 确认页顶 Python API 已连接  
+2. 选题（整句测 **Q3**）  
+3. **按下开始识别** → 开始 10s 倒计时与实时转写/匹配  
+4. **答对** → 立即停止；**超时** → 自动结束并出最终结果  
+
+#### 5. 可选开关
+
+| 变量 | 作用 |
+|------|------|
+| `SPEECH_SEMANTIC_MODE=off` | 关闭语义，仅字形/拼音 |
+| `SPEECH_SEMANTIC_MODE=offline` | 改用本地 BGE（需另下模型） |
+| `SPEECH_ANSWERS_PATH=data/xxx.json` | 启动时指定答案库相对路径 |
+
+**V2.0 基线不要改坏在线页主路径**（实时听写 + 线上语义 + 10s 限时）。
+
+---
+
+## 版本记录 · 语音作答 · 在线识别 V1.0（历史）
+
+V1.0 基线：实时听写 + ≥90% 字形/拼音匹配 + 通过即停。整句线上语义与 10s 限时见上方 **V2.0**。
 
 ---
 
@@ -182,7 +246,7 @@ start-people.bat
 
 打开 http://localhost:5173/people.html  
 
-**语音作答 · 在线识别 V1.0（推荐：实时听写 + 匹配）：**
+**语音作答 · 在线识别 V2.0（推荐：实时听写 + DeepSeek 语义 + 10s 限时）：**
 
 ```bat
 start-speech-online.bat
@@ -190,8 +254,8 @@ start-speech-online.bat
 
 该脚本会启动 Python API + Vite，并打开 http://localhost:5173/speech-online.html  
 
-要求：**联网**、**Chrome / Edge**；页顶显示 Python 匹配 API 已连接。  
-操作：选题 → 按下开始识别 → 边说边看转写/分数 → **通过即自动停止**（也可手动按下结束）。
+要求：**联网**、**Chrome / Edge**；先配置 `python\data\online.env`（见上方 V2.0）。  
+操作：选题 → 按下开始识别 → **10s 内**边说边匹配 → **通过或超时均自动结束**。
 
 **语音作答 · 离线 Whisper（对照）：**
 
@@ -233,7 +297,7 @@ npm.cmd run dev
 | `start.bat` / `start.ps1` | 举手单人调试 |
 | `start-people-fast.bat` | **推荐** 人物快版 + Python（视频解析 V1.0） |
 | `start-people.bat` | 人物原版 + Python（~10FPS 同步排序） |
-| `start-speech-online.bat` | **推荐** 语音在线识别 V1.0 + Python 匹配 |
+| `start-speech-online.bat` | **推荐** 语音在线识别 V2.0 + Python 匹配 |
 | `start-speech.bat` | 语音离线 Whisper + Python |
 
 ### PowerShell 报错「禁止运行脚本」
