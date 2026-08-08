@@ -11,15 +11,19 @@ import {
   dedupePosesByTorso,
   detectPosesForVideo,
   FirstRaiseTracker,
+  indexByTrackIdFromSlots,
   isHandRaised,
   observePersonCount,
   PoseTracker,
+  rebindSlotsToTracks,
+  slotsFromSort,
   startCamera,
   torsoCenter,
   unlockCountLock,
   type CameraHandle,
   type CountLockSnapshot,
   type FirstRaiseEvent,
+  type NumberingSlot,
   type TrackedPose,
 } from "../vision";
 import { POSE } from "../vision/detect/isHandRaised";
@@ -28,6 +32,11 @@ const DETECT_INTERVAL_MS = 50;
 const RAISE_MARGIN = 0.08;
 /** Consecutive frames at expected count before one-shot Python sort. */
 const LOCK_STABLE_FRAMES = 8;
+/** How far (normalized) a returning person can be from their locked seat to reclaim the number. */
+const REBIND_MAX_DISTANCE = 0.35;
+/** Tracker: tolerate larger motion + longer dropouts before killing a track. */
+const TRACK_MATCH_DISTANCE = 0.28;
+const TRACK_MAX_MISSED = 60; // ~3s at 20FPS
 
 type PersonPoint = { id: number; x: number; y: number };
 
@@ -68,10 +77,15 @@ let raf = 0;
 let lastTs = 0;
 let canvasSized = false;
 let apiOk = false;
-let tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 24, minFrames: 5 });
+let tracker = new PoseTracker({
+  matchDistance: TRACK_MATCH_DISTANCE,
+  maxMissed: TRACK_MAX_MISSED,
+  minFrames: 5,
+});
 let race = new FirstRaiseTracker();
 let countLock: CountLockSnapshot = createCountLockState();
-/** Frozen after one-shot sort: trackId → 1-based index. */
+/** Sticky seats after lock: index ↔ trackId + last known center. */
+let numberingSlots: NumberingSlot[] = [];
 let indexByTrackId = new Map<number, number>();
 let lockedPeople: SortedPerson[] = [];
 let sortInFlight = false;
@@ -145,12 +159,25 @@ function sortLocal(people: PersonPoint[]): SortResponse {
 }
 
 function applyLockFromSort(sorted: SortResponse): void {
-  indexByTrackId = new Map();
+  numberingSlots = slotsFromSort(sorted.people);
+  indexByTrackId = indexByTrackIdFromSlots(numberingSlots);
   lockedPeople = sorted.people.map((p) => ({ ...p, raised: false }));
-  for (const p of sorted.people) {
-    const id = typeof p.id === "number" ? p.id : Number(p.id);
-    if (Number.isFinite(id)) indexByTrackId.set(id, p.index);
-  }
+}
+
+function syncSlotsWithTracks(tracked: TrackedPose[]): void {
+  numberingSlots = rebindSlotsToTracks(
+    numberingSlots,
+    tracked.map((t) => ({ trackId: t.trackId, x: t.center.x, y: t.center.y })),
+    { maxDistance: REBIND_MAX_DISTANCE },
+  );
+  indexByTrackId = indexByTrackIdFromSlots(numberingSlots);
+  lockedPeople = numberingSlots.map((s) => ({
+    index: s.index,
+    x: s.x,
+    y: s.y,
+    id: s.trackId,
+    raised: false,
+  }));
 }
 
 async function lockNumbering(payload: PersonPoint[]): Promise<void> {
@@ -258,8 +285,18 @@ function drawOverlay(
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
+  if (locked) {
+    for (const slot of numberingSlots) {
+      if (slot.trackId != null) continue;
+      ctx.fillStyle = "rgba(139, 152, 165, 0.85)";
+      ctx.font = "bold 24px Segoe UI, sans-serif";
+      ctx.fillText(`#${slot.index}?`, slot.x * w - 18, slot.y * h - 16);
+    }
+  }
+
   for (const t of tracked) {
     const index = locked ? indexByTrackId.get(t.trackId) : undefined;
+    if (locked && index == null) continue; // stranger / not yet rebound — don't flash "?"
     const label = index ?? "?";
     const isWinner = winner != null && index === winner.personIndex;
     const raised = t.debouncer.raised;
@@ -288,6 +325,7 @@ function drawOverlay(
 
 function clearNumberingLock(): void {
   countLock = unlockCountLock(countLock);
+  numberingSlots = [];
   indexByTrackId = new Map();
   lockedPeople = [];
   race = new FirstRaiseTracker();
@@ -304,12 +342,16 @@ async function loop(nowMs: number): Promise<void> {
   lastTs = nowMs;
 
   const raw = detectPosesForVideo(landmarker, video, nowMs);
-  const poses = dedupePosesByTorso(raw, { minDistance: 0.14 });
+  const poses = dedupePosesByTorso(raw, { minDistance: 0.12 });
   const tracked = tracker.update(poses);
+
+  if (countLock.locked) {
+    syncSlotsWithTracks(tracked);
+  }
 
   for (const t of tracked) {
     if (!t.fresh) continue;
-    // Only score raises after numbering is locked.
+    // Only score raises after numbering is locked and this track owns a seat.
     if (countLock.locked && indexByTrackId.has(t.trackId)) {
       t.debouncer.update(isHandRaised(t.landmarks, { margin: RAISE_MARGIN }));
     }
@@ -347,6 +389,7 @@ async function loop(nowMs: number): Promise<void> {
 
   // Locked: hand-raise + first-raise only (no Python sort).
   const people = peopleFromLockedTracks(tracked);
+  const missing = numberingSlots.filter((s) => s.trackId == null).length;
   race.update(
     people.map((p) => ({ personIndex: p.index, raised: !!p.raised })),
     nowMs,
@@ -359,6 +402,10 @@ async function loop(nowMs: number): Promise<void> {
   const raisedIndexes = people.filter((p) => p.raised).map((p) => p.index);
   if (winner) {
     setStatus(`最先举手：#${winner.personIndex} · 「下一轮」再赛 · 「重新编号」可重排`);
+  } else if (missing > 0) {
+    setStatus(
+      `编号已锁定 · 在场 ${people.length}/${lockedPeople.length}（短暂丢失会按原位置找回编号）`,
+    );
   } else if (raisedIndexes.length === 0) {
     setStatus(`编号已锁定 ${lockedPeople.length} 人 · 等待举手…`);
   } else {
@@ -378,7 +425,11 @@ async function onStart(): Promise<void> {
       minTrackingConfidence: 0.45,
     });
     camera = await startCamera(video);
-    tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 24, minFrames: 5 });
+    tracker = new PoseTracker({
+      matchDistance: TRACK_MATCH_DISTANCE,
+      maxMissed: TRACK_MAX_MISSED,
+      minFrames: 5,
+    });
     clearNumberingLock();
     lastTs = 0;
     canvasSized = false;

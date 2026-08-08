@@ -20,6 +20,14 @@ export {
   type CountLockSnapshot,
 } from "./detect/countLock";
 export {
+  slotsFromSort,
+  rebindSlotsToTracks,
+  indexByTrackIdFromSlots,
+  type NumberingSlot,
+  type TrackPoint,
+  type RebindOptions,
+} from "./detect/numberingSlots";
+export {
   createPoseLandmarker,
   detectPosesForVideo,
   DEFAULT_MODEL_URL,
