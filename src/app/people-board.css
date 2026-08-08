@@ -1,0 +1,151 @@
+:root {
+  --bg: #0f1419;
+  --fg: #e7ecf1;
+  --muted: #8b98a5;
+  --accent: #3d9cfd;
+  --ok: #2dd4a8;
+  --warn: #f0b429;
+  --idle: #3a4550;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
+header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+}
+
+.sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.sub a {
+  color: var(--accent);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 1.25rem 0;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+  background: var(--accent);
+  color: #061018;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.api-status {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.api-status.ok {
+  color: var(--ok);
+}
+
+.api-status.bad {
+  color: var(--warn);
+}
+
+.hud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: stretch;
+  margin-bottom: 0.75rem;
+}
+
+.count-card {
+  min-width: 140px;
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  background: #1a222b;
+  border: 1px solid var(--idle);
+}
+
+.count-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.count-value {
+  font-size: 3rem;
+  font-weight: 750;
+  line-height: 1.1;
+  margin-top: 0.25rem;
+}
+
+.number-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-content: center;
+  flex: 1;
+}
+
+.number-list li {
+  min-width: 3rem;
+  text-align: center;
+  padding: 0.65rem 0.9rem;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #061018;
+  font-weight: 750;
+  font-size: 1.25rem;
+}
+
+.status {
+  min-height: 1.25rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+video,
+canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}

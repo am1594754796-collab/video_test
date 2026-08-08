@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>举手检测 · 单人调试</title>
+    <link rel="stylesheet" href="/src/app/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <h1>举手行为检测 · 单人调试</h1>
+        <p class="sub">numPoses=1 · 专为把举手做稳（不含多人/计分）· <a href="/people.html">人物数量页</a></p>
+      </header>
+
+      <section class="controls">
+        <button type="button" id="btn-start">打开相机</button>
+        <button type="button" id="btn-stop" disabled>关闭</button>
+        <label class="field">
+          边距 margin
+          <input id="input-margin" type="number" min="0" max="0.3" step="0.01" value="0.08" />
+        </label>
+        <label class="field">
+          连续帧 minFrames
+          <input id="input-frames" type="number" min="1" max="30" step="1" value="5" />
+        </label>
+      </section>
+
+      <p id="status" class="status" role="status">未启动 · 单人模式</p>
+
+      <div class="stage">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
+
+      <p id="raise-badge" class="pose-list" aria-live="polite">
+        <span id="raise-pill" class="pill">未举手</span>
+      </p>
+    </main>
+    <script type="module" src="/src/app/main.ts"></script>
+  </body>
+</html>

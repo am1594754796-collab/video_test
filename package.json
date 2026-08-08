@@ -1,0 +1,23 @@
+{
+  "name": "hand-raise-vision",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Vision Recognition: MediaPipe Pose + hand-raise detection (classroom module)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.21"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "vite": "^6.2.2",
+    "vitest": "^3.0.9"
+  }
+}

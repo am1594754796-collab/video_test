@@ -1,0 +1,41 @@
+---
+description: Use agent-skills workflows from .cursor/skills
+alwaysApply: true
+---
+
+# Agent Skills (Addy Osmani)
+
+Before non-trivial technical work in this project:
+
+1. Route via `.cursor/skills/using-agent-skills/SKILL.md`.
+2. Read and follow the matching skill under `.cursor/skills/<name>/SKILL.md`.
+3. Open linked files under `references/` when a skill points to them.
+4. Prefer project skills over guessing; the user does not need to say "read skill" each time.
+
+## Slash commands (explicit lifecycle)
+
+When the user invokes these, follow the matching command skill (human-triggered):
+
+| Command | Skill folder |
+|---------|----------------|
+| `/spec` | `.cursor/skills/spec/SKILL.md` |
+| `/plan` | `.cursor/skills/plan/SKILL.md` |
+| `/build` or `/build auto` | `.cursor/skills/build/SKILL.md` |
+| `/test` | `.cursor/skills/test/SKILL.md` |
+| `/review` | `.cursor/skills/review/SKILL.md` |
+| `/code-simplify` | `.cursor/skills/code-simplify/SKILL.md` |
+| `/ship` | `.cursor/skills/ship/SKILL.md` |
+| `/webperf` | `.cursor/skills/webperf/SKILL.md` |
+| `/log` | `.cursor/skills/log/SKILL.md` |
+
+## Artifacts
+
+- Specs: `SPEC.md` (or `docs/SPEC.md`, `spec/`)
+- Plans: `tasks/plan.md`, `tasks/todo.md`
+- Worklog: `docs/worklog/YYYY-MM-DD.md`
+
+Treat these as living documents while the work is in progress.
+
+## Worklog
+
+After a meaningful `/spec`, `/plan`, `/build`, `/review`, or `/ship` slice — or when the user is about to end the session — follow `.cursor/skills/dev-worklog/SKILL.md` and append today's entry (or remind the user to run `/log`). Do not invent progress.

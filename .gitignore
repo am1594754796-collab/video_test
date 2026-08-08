@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+*.zip
+python/.venv/
+python/**/__pycache__/
+python/**/*.pyc
+python/.pytest_cache/
+.vite/
