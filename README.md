@@ -14,6 +14,8 @@
 
 仓库：https://github.com/am1594754796-collab/video_test
 
+**换机配置语音 V2.0：** 见 [`docs/SETUP-speech-v2.md`](docs/SETUP-speech-v2.md)
+
 ---
 
 ## 版本记录 · 语音识别 V2.0（当前）
@@ -37,13 +39,16 @@
 
 | 项 | 路径 |
 |----|------|
+| **移植配置手册（换机必看）** | **`docs/SETUP-speech-v2.md`** |
 | 正式答案库 | `python/data/answers.json` |
 | 当前指向 | `python/data/answers.path`（相对 `python/`） |
 | 线上语义配置（含 Key，**不进 Git**） | `python/data/online.env` |
 | 配置模板 | `python/data/online.env.example` |
 | 说明 | `python/data/README.md` · 规格 `docs/SPEC-speech-answer.md` |
 
-### 如何配置到当前 V2.0 效果
+详细逐步配置（依赖 / 答案库 / DeepSeek / 启动验收）见：**[docs/SETUP-speech-v2.md](docs/SETUP-speech-v2.md)**。
+
+### 如何配置到当前 V2.0 效果（摘要）
 
 按顺序做即可在本机复现当前测试效果。
 
