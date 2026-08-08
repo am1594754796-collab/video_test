@@ -1,16 +1,44 @@
-# 举手行为检测（视觉识别模块）
+# 教室抢答模块（视觉 + 语音）
 
-教室场景视觉模块：**MediaPipe Pose** + 举手判定 + 人物数量 / 左→右编号 + 最先举手。
+教室场景本地网页：**视觉举手识别** + **语音作答匹配**（解耦，不含计分 / 抢答流程臂装）。
 
 | 页面 | 地址 | 需要 | 说明 |
 |------|------|------|------|
 | 举手单人调试 | http://localhost:5173/ | Node.js | 调 margin / minFrames |
-| **人物编号快版（推荐）· V1.0** | http://localhost:5173/people-fast.html | Node.js **+ Python** | 视频解析 V1.0：锁定编号 + 举手竞态 |
+| **人物编号快版（推荐）· 视频解析 V1.0** | http://localhost:5173/people-fast.html | Node.js **+ Python** | 锁定编号 + 举手竞态 |
 | 人物编号原版 | http://localhost:5173/people.html | Node.js **+ Python** | ~10FPS，Python 同步排序 |
+| **语音作答 · 在线识别 V1.0（推荐）** | http://localhost:5173/speech-online.html | Node.js **+ Python** · **联网** · Chrome/Edge | 实时听写 + ≥90% / 同音匹配；通过即停 |
+| 语音作答 · 离线 Whisper | http://localhost:5173/speech.html | Node.js **+ Python** | 按下录音 → 上传 → 本机 Whisper |
 
 不含计分 / 抢答流程（解耦在其他模块）。
 
 仓库：https://github.com/am1594754796-collab/video_test
+
+---
+
+## 版本记录 · 语音作答 · 在线识别 V1.0
+
+**当前里程碑：在线语音转换 / 作答匹配 V1.0（已满足需求）。**
+
+以 **在线识别页**（`speech-online.html` / `start-speech-online.bat`）为准，能力已齐：
+
+| 能力 | 状态 |
+|------|------|
+| 外部已选定当前题（下拉选题 / `question_id`） | 已满足 |
+| **按下开始识别** 后 **实时转写**（Web Speech，`zh-CN`） | 已满足 |
+| **边说边匹配**（Python `match-text`，阈值 ≥ **90%**） | 已满足 |
+| **同音容错**（字形 + 拼音 TONE3 取高分） | 已满足 |
+| **判定通过后立即停止转写**，后续语音不再继续识别 | 已满足 |
+| 答案库本地 JSON（一题唯一标准答案） | 已满足 |
+
+配套：
+
+- 规格：`docs/SPEC-speech-answer.md`
+- 意图：`docs/intent/speech-answer-match.md`
+- Python：`python/speech_answer/` · API：`/api/speech/questions`、`/api/speech/match-text`
+- 离线对照页：`speech.html`（本机 Whisper，不作为本 V1.0 基线）
+
+后续若做 V1.1+，在本记录下追加条目；**V1.0 基线不要改坏在线页主路径。**
 
 ---
 
@@ -143,6 +171,25 @@ start-people.bat
 
 打开 http://localhost:5173/people.html  
 
+**语音作答 · 在线识别 V1.0（推荐：实时听写 + 匹配）：**
+
+```bat
+start-speech-online.bat
+```
+
+该脚本会启动 Python API + Vite，并打开 http://localhost:5173/speech-online.html  
+
+要求：**联网**、**Chrome / Edge**；页顶显示 Python 匹配 API 已连接。  
+操作：选题 → 按下开始识别 → 边说边看转写/分数 → **通过即自动停止**（也可手动按下结束）。
+
+**语音作答 · 离线 Whisper（对照）：**
+
+```bat
+start-speech.bat
+```
+
+打开 http://localhost:5173/speech.html（按下录音 → 结束上传识别；首次会下载 Whisper 模型）。
+
 #### 手动分两步启动（调试用）
 
 终端 1 — Python API：
@@ -158,7 +205,7 @@ cd python
 npm.cmd run dev
 ```
 
-浏览器打开 http://localhost:5173/people-fast.html（推荐）或 `/people.html`（原版）  
+浏览器打开 http://localhost:5173/people-fast.html（推荐）或 `/people.html`（原版）或 `/speech-online.html`（语音在线 V1.0）  
 页顶应显示 **Python API: 已连接**。
 
 ### 6. 相机权限
@@ -173,8 +220,10 @@ npm.cmd run dev
 | 脚本 | 作用 |
 |------|------|
 | `start.bat` / `start.ps1` | 举手单人调试 |
-| `start-people-fast.bat` | **推荐** 人物快版 + Python（~20FPS 同步排序） |
+| `start-people-fast.bat` | **推荐** 人物快版 + Python（视频解析 V1.0） |
 | `start-people.bat` | 人物原版 + Python（~10FPS 同步排序） |
+| `start-speech-online.bat` | **推荐** 语音在线识别 V1.0 + Python 匹配 |
+| `start-speech.bat` | 语音离线 Whisper + Python |
 
 ### PowerShell 报错「禁止运行脚本」
 

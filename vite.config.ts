@@ -10,6 +10,8 @@ export default defineConfig({
         main: resolve(__dirname, "index.html"),
         people: resolve(__dirname, "people.html"),
         peopleFast: resolve(__dirname, "people-fast.html"),
+        speech: resolve(__dirname, "speech.html"),
+        speechOnline: resolve(__dirname, "speech-online.html"),
       },
     },
   },

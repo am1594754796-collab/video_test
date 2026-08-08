@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>语音作答 · 在线识别</title>
+    <link rel="stylesheet" href="/src/app/speech-board.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <h1>语音作答 · 在线识别</h1>
+        <p class="sub">
+          按下开始后实时转写并边说边匹配；<strong>一旦判定通过即停止转写</strong>
+          · <a href="/speech.html">离线 Whisper 版</a>
+          · <a href="/people-fast.html">人物编号快版</a>
+        </p>
+      </header>
+
+      <section class="controls">
+        <label class="field">
+          当前题目
+          <select id="question-select"></select>
+        </label>
+        <button type="button" id="btn-record">按下开始识别</button>
+        <span id="api-status" class="api-status">检查中…</span>
+      </section>
+
+      <p id="status" class="status" role="status">请选择题目，按下后开始在线听写</p>
+
+      <section class="result" aria-live="polite">
+        <div class="result-row">
+          <span class="label">转写</span>
+          <span id="out-transcript">—</span>
+        </div>
+        <div class="result-row">
+          <span class="label">标准答案</span>
+          <span id="out-expected">—</span>
+        </div>
+        <div class="result-row">
+          <span class="label">匹配分</span>
+          <span id="out-score">—</span>
+        </div>
+        <div class="result-row">
+          <span class="label">结果</span>
+          <span id="out-passed" class="pill idle">未测</span>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/app/speech-board-online.ts"></script>
+  </body>
+</html>

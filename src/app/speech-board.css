@@ -1,0 +1,162 @@
+:root {
+  --bg: #0f1419;
+  --fg: #e7ecf1;
+  --muted: #8b98a5;
+  --accent: #3d9cfd;
+  --ok: #2dd4a8;
+  --bad: #f07178;
+  --idle: #3a4550;
+  --rec: #e06c75;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
+header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+  font-weight: 650;
+}
+
+.sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.sub a {
+  color: var(--accent);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: end;
+  margin: 1.25rem 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.field select {
+  min-width: 12rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--idle);
+  background: #1a222b;
+  color: var(--fg);
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  padding: 0.65rem 1.15rem;
+  background: var(--accent);
+  color: #061018;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.recording {
+  background: var(--rec);
+  color: #1a0a0c;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+.api-status {
+  font-size: 0.85rem;
+  color: var(--muted);
+  align-self: center;
+}
+
+.api-status.ok {
+  color: var(--ok);
+}
+
+.api-status.bad {
+  color: var(--bad);
+}
+
+.status {
+  min-height: 1.25rem;
+  color: var(--muted);
+}
+
+.result {
+  margin-top: 1.5rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--idle);
+  border-radius: 10px;
+  background: #151c24;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.result-row {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.result-row .label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.pill {
+  display: inline-block;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  font-weight: 650;
+  font-size: 0.9rem;
+}
+
+.pill.idle {
+  background: var(--idle);
+}
+
+.pill.ok {
+  background: color-mix(in srgb, var(--ok) 35%, transparent);
+  color: var(--ok);
+}
+
+.pill.bad {
+  background: color-mix(in srgb, var(--bad) 35%, transparent);
+  color: var(--bad);
+}
