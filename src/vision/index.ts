@@ -13,6 +13,13 @@ export {
   type RaiseObservation,
 } from "./detect/firstRaiseTracker";
 export {
+  createCountLockState,
+  observePersonCount,
+  unlockCountLock,
+  type CountLockOptions,
+  type CountLockSnapshot,
+} from "./detect/countLock";
+export {
   createPoseLandmarker,
   detectPosesForVideo,
   DEFAULT_MODEL_URL,

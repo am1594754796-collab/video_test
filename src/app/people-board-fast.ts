@@ -1,28 +1,33 @@
 /**
  * People board (fast path):
- * ~20 Hz MediaPipe camera loop + synchronous Python left→right sort each frame.
- * If a sort is still in flight, later rAF ticks are skipped (no overlapping requests).
+ * 1) Wait until on-screen count matches expected (stable) → one Python L→R sort → lock indices to trackIds
+ * 2) After lock: only hand-raise + first-raise feedback (no per-frame re-sort)
  */
 
 import { PoseLandmarker } from "@mediapipe/tasks-vision";
 import {
+  createCountLockState,
   createPoseLandmarker,
   dedupePosesByTorso,
   detectPosesForVideo,
   FirstRaiseTracker,
   isHandRaised,
+  observePersonCount,
   PoseTracker,
   startCamera,
   torsoCenter,
+  unlockCountLock,
   type CameraHandle,
+  type CountLockSnapshot,
   type FirstRaiseEvent,
   type TrackedPose,
 } from "../vision";
 import { POSE } from "../vision/detect/isHandRaised";
 
-/** Target ~20 FPS camera / pose sampling (50ms). */
 const DETECT_INTERVAL_MS = 50;
 const RAISE_MARGIN = 0.08;
+/** Consecutive frames at expected count before one-shot Python sort. */
+const LOCK_STABLE_FRAMES = 8;
 
 type PersonPoint = { id: number; x: number; y: number };
 
@@ -51,6 +56,8 @@ const listEl = document.querySelector<HTMLOListElement>("#number-list")!;
 const btnStart = document.querySelector<HTMLButtonElement>("#btn-start")!;
 const btnStop = document.querySelector<HTMLButtonElement>("#btn-stop")!;
 const btnReset = document.querySelector<HTMLButtonElement>("#btn-reset")!;
+const btnRelock = document.querySelector<HTMLButtonElement>("#btn-relock")!;
+const inputExpected = document.querySelector<HTMLInputElement>("#input-expected")!;
 
 const SORT_URL = "/api/people/sort";
 const HEALTH_URL = "/api/health";
@@ -61,13 +68,21 @@ let raf = 0;
 let lastTs = 0;
 let canvasSized = false;
 let apiOk = false;
-/** Hold ~1.2s of misses at 20 Hz. */
 let tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 24, minFrames: 5 });
 let race = new FirstRaiseTracker();
+let countLock: CountLockSnapshot = createCountLockState();
+/** Frozen after one-shot sort: trackId → 1-based index. */
+let indexByTrackId = new Map<number, number>();
+let lockedPeople: SortedPerson[] = [];
+let sortInFlight = false;
 let lastUiKey = "";
 let lastWinnerKey = "";
-/** Prevent overlapping sync sort requests while targeting 20 FPS. */
-let frameBusy = false;
+
+function readExpectedCount(): number {
+  const n = Number(inputExpected.value);
+  if (!Number.isFinite(n)) return 2;
+  return Math.min(6, Math.max(1, Math.round(n)));
+}
 
 function setStatus(text: string): void {
   statusEl.textContent = text;
@@ -129,22 +144,52 @@ function sortLocal(people: PersonPoint[]): SortResponse {
   };
 }
 
-function attachRaised(
-  numbered: SortedPerson[],
-  tracked: TrackedPose[],
-): SortedPerson[] {
-  return numbered.map((p) => {
-    let best: TrackedPose | null = null;
-    let bestD = Infinity;
-    for (const t of tracked) {
-      const d = Math.hypot(t.center.x - p.x, t.center.y - p.y);
-      if (d < bestD) {
-        bestD = d;
-        best = t;
-      }
-    }
-    return { ...p, raised: best?.debouncer.raised ?? false };
-  });
+function applyLockFromSort(sorted: SortResponse): void {
+  indexByTrackId = new Map();
+  lockedPeople = sorted.people.map((p) => ({ ...p, raised: false }));
+  for (const p of sorted.people) {
+    const id = typeof p.id === "number" ? p.id : Number(p.id);
+    if (Number.isFinite(id)) indexByTrackId.set(id, p.index);
+  }
+}
+
+async function lockNumbering(payload: PersonPoint[]): Promise<void> {
+  if (sortInFlight) return;
+  sortInFlight = true;
+  try {
+    if (!apiOk) await checkHealth();
+    const sorted = apiOk ? await sortViaPython(payload) : sortLocal(payload);
+    if (apiOk) setApiStatus(true, "编号已锁定");
+    applyLockFromSort(sorted);
+    race = new FirstRaiseTracker();
+    lastUiKey = "";
+    lastWinnerKey = "";
+    setStatus(`已锁定 ${sorted.count} 人编号 · 开始举手检测`);
+  } catch {
+    setApiStatus(false, "排序失败，已用本地锁定");
+    applyLockFromSort(sortLocal(payload));
+    race = new FirstRaiseTracker();
+    setStatus(`本地锁定 ${payload.length} 人编号 · 开始举手检测`);
+  } finally {
+    sortInFlight = false;
+  }
+}
+
+function peopleFromLockedTracks(tracked: TrackedPose[]): SortedPerson[] {
+  const out: SortedPerson[] = [];
+  for (const t of tracked) {
+    const index = indexByTrackId.get(t.trackId);
+    if (index == null) continue;
+    out.push({
+      index,
+      x: t.center.x,
+      y: t.center.y,
+      id: t.trackId,
+      raised: t.debouncer.raised,
+    });
+  }
+  out.sort((a, b) => a.index - b.index);
+  return out;
 }
 
 function renderWinner(winner: FirstRaiseEvent | null): void {
@@ -165,17 +210,28 @@ function renderWinner(winner: FirstRaiseEvent | null): void {
   }
 }
 
-function renderHud(result: SortResponse, winner: FirstRaiseEvent | null): void {
-  const key = result.people
+function renderHud(
+  liveCount: number,
+  people: SortedPerson[],
+  winner: FirstRaiseEvent | null,
+  locked: boolean,
+): void {
+  const key = `${locked ? 1 : 0}:${liveCount}:${people
     .map((p) => `${p.index}:${p.raised ? 1 : 0}`)
-    .join(",");
-  const fullKey = `${result.count}:${key}:w${winner?.personIndex ?? "-"}`;
-  if (fullKey === lastUiKey) return;
-  lastUiKey = fullKey;
+    .join(",")}:w${winner?.personIndex ?? "-"}`;
+  if (key === lastUiKey) return;
+  lastUiKey = key;
 
-  countEl.textContent = String(result.count);
+  countEl.textContent = String(locked ? people.length || lockedPeople.length : liveCount);
   listEl.innerHTML = "";
-  for (const p of result.people) {
+  const display = locked
+    ? lockedPeople.map((base) => {
+        const live = people.find((p) => p.index === base.index);
+        return { ...base, raised: live?.raised ?? false };
+      })
+    : [];
+
+  for (const p of display) {
     const li = document.createElement("li");
     const isWinner = winner?.personIndex === p.index;
     if (isWinner) {
@@ -185,7 +241,6 @@ function renderHud(result: SortResponse, winner: FirstRaiseEvent | null): void {
     } else {
       li.textContent = String(p.index);
     }
-    li.title = `x=${p.x.toFixed(3)}${p.raised ? " · raised" : ""}${isWinner ? " · first" : ""}`;
     li.classList.toggle("raised", !!p.raised && !isWinner);
     li.classList.toggle("winner", isWinner);
     listEl.appendChild(li);
@@ -195,30 +250,23 @@ function renderHud(result: SortResponse, winner: FirstRaiseEvent | null): void {
 
 function drawOverlay(
   tracked: TrackedPose[],
-  numbered: SortedPerson[],
+  people: SortedPerson[],
   winner: FirstRaiseEvent | null,
+  locked: boolean,
 ): void {
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
   for (const t of tracked) {
-    let best: SortedPerson | null = null;
-    let bestD = Infinity;
-    for (const p of numbered) {
-      const d = Math.hypot(t.center.x - p.x, t.center.y - p.y);
-      if (d < bestD) {
-        bestD = d;
-        best = p;
-      }
-    }
-    const label = best?.index ?? "?";
-    const isWinner = winner != null && best?.index === winner.personIndex;
+    const index = locked ? indexByTrackId.get(t.trackId) : undefined;
+    const label = index ?? "?";
+    const isWinner = winner != null && index === winner.personIndex;
     const raised = t.debouncer.raised;
     const ls = t.landmarks[POSE.LEFT_SHOULDER];
     const rs = t.landmarks[POSE.RIGHT_SHOULDER];
     if (ls && rs) {
-      ctx.strokeStyle = isWinner ? "#f0b429" : raised ? "#2dd4a8" : "#3d9cfd";
+      ctx.strokeStyle = isWinner ? "#f0b429" : raised ? "#2dd4a8" : locked ? "#3d9cfd" : "#8b98a5";
       ctx.lineWidth = isWinner ? 5 : 3;
       ctx.beginPath();
       ctx.moveTo(ls.x * w, ls.y * h);
@@ -227,73 +275,94 @@ function drawOverlay(
     }
     ctx.fillStyle = isWinner ? "#f0b429" : raised ? "#2dd4a8" : "#e7ecf1";
     ctx.font = "bold 28px Segoe UI, sans-serif";
-    const text = isWinner ? `#${label} 最先` : raised ? `#${label} 举手` : `#${label}`;
+    let text: string;
+    if (!locked) text = "…";
+    else if (isWinner) text = `#${label} 最先`;
+    else if (raised) text = `#${label} 举手`;
+    else text = `#${label}`;
     ctx.fillText(text, t.center.x * w - 14, t.center.y * h - 16);
   }
+
+  void people;
+}
+
+function clearNumberingLock(): void {
+  countLock = unlockCountLock(countLock);
+  indexByTrackId = new Map();
+  lockedPeople = [];
+  race = new FirstRaiseTracker();
+  lastUiKey = "";
+  lastWinnerKey = "";
+  renderWinner(null);
 }
 
 async function loop(nowMs: number): Promise<void> {
   raf = requestAnimationFrame((t) => void loop(t));
   if (!landmarker || video.readyState < 2) return;
   if (!ensureCanvasSize()) return;
-  if (frameBusy) return;
   if (nowMs - lastTs < DETECT_INTERVAL_MS) return;
   lastTs = nowMs;
-  frameBusy = true;
 
-  try {
-    const raw = detectPosesForVideo(landmarker, video, nowMs);
-    const poses = dedupePosesByTorso(raw, { minDistance: 0.14 });
-    const tracked = tracker.update(poses);
+  const raw = detectPosesForVideo(landmarker, video, nowMs);
+  const poses = dedupePosesByTorso(raw, { minDistance: 0.14 });
+  const tracked = tracker.update(poses);
 
-    for (const t of tracked) {
-      if (!t.fresh) continue;
+  for (const t of tracked) {
+    if (!t.fresh) continue;
+    // Only score raises after numbering is locked.
+    if (countLock.locked && indexByTrackId.has(t.trackId)) {
       t.debouncer.update(isHandRaised(t.landmarks, { margin: RAISE_MARGIN }));
     }
+  }
 
-    const payload = tracked.map((t) => ({
-      id: t.trackId,
-      x: torsoCenter(t.landmarks).x,
-      y: torsoCenter(t.landmarks).y,
-    }));
+  const payload = tracked.map((t) => ({
+    id: t.trackId,
+    x: torsoCenter(t.landmarks).x,
+    y: torsoCenter(t.landmarks).y,
+  }));
+  const liveCount = payload.length;
+  const expected = readExpectedCount();
 
-    // Synchronous Python sort on this frame's 20FPS camera sample.
-    let sorted: SortResponse;
-    try {
-      if (!apiOk) await checkHealth();
-      sorted = apiOk ? await sortViaPython(payload) : sortLocal(payload);
-      if (apiOk) setApiStatus(true, "同步排序 · ~20FPS");
-    } catch {
-      setApiStatus(false, "请求失败，暂用本地排序");
-      sorted = sortLocal(payload);
-    }
+  if (!countLock.locked) {
+    const observed = observePersonCount(countLock, liveCount, {
+      expectedCount: expected,
+      minStableFrames: LOCK_STABLE_FRAMES,
+    });
+    countLock = observed.state;
+    renderHud(liveCount, [], null, false);
+    drawOverlay(tracked, [], null, false);
 
-    const people = attachRaised(sorted.people, tracked);
-    const result: SortResponse = { count: sorted.count, people };
-
-    race.update(
-      people.map((p) => ({ personIndex: p.index, raised: !!p.raised })),
-      nowMs,
-    );
-    const winner = race.winner;
-
-    renderHud(result, winner);
-    drawOverlay(tracked, people, winner);
-
-    const raisedIndexes = people.filter((p) => p.raised).map((p) => p.index);
-    if (result.count === 0) {
-      setStatus("未检测到人物 · ~20FPS · Python 同步编号");
-    } else if (winner) {
-      setStatus(`最先举手：#${winner.personIndex} · 点「下一轮」可再赛`);
-    } else if (raisedIndexes.length === 0) {
-      setStatus(`检出 ${result.count} 人 · 等待举手…`);
-    } else {
+    if (observed.shouldLock) {
+      setStatus(`人数已达 ${expected} · 正在 Python 排序锁定…`);
+      await lockNumbering(payload);
+    } else if (liveCount === expected) {
       setStatus(
-        `检出 ${result.count} 人 · 举手中：${raisedIndexes.map((n) => `#${n}`).join("、")}`,
+        `人数 ${liveCount}/${expected} · 稳定中 ${countLock.streak}/${LOCK_STABLE_FRAMES} 帧后锁定编号`,
       );
+    } else {
+      setStatus(`等待出镜人数达到 ${expected}（当前 ${liveCount}）· 暂不排序`);
     }
-  } finally {
-    frameBusy = false;
+    return;
+  }
+
+  // Locked: hand-raise + first-raise only (no Python sort).
+  const people = peopleFromLockedTracks(tracked);
+  race.update(
+    people.map((p) => ({ personIndex: p.index, raised: !!p.raised })),
+    nowMs,
+  );
+  const winner = race.winner;
+
+  renderHud(liveCount, people, winner, true);
+  drawOverlay(tracked, people, winner, true);
+
+  const raisedIndexes = people.filter((p) => p.raised).map((p) => p.index);
+  if (winner) {
+    setStatus(`最先举手：#${winner.personIndex} · 「下一轮」再赛 · 「重新编号」可重排`);
+  } else if (raisedIndexes.length === 0) {
+    setStatus(`编号已锁定 ${lockedPeople.length} 人 · 等待举手…`);
+  } else {
+    setStatus(`举手中：${raisedIndexes.map((n) => `#${n}`).join("、")}`);
   }
 }
 
@@ -310,15 +379,13 @@ async function onStart(): Promise<void> {
     });
     camera = await startCamera(video);
     tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 24, minFrames: 5 });
-    race = new FirstRaiseTracker();
-    frameBusy = false;
+    clearNumberingLock();
     lastTs = 0;
-    lastUiKey = "";
-    lastWinnerKey = "";
     canvasSized = false;
     btnStop.disabled = false;
     btnReset.disabled = false;
-    setStatus("运行中 · ~20FPS 相机 · Python 同步排序");
+    btnRelock.disabled = false;
+    setStatus(`运行中 · 等待 ${readExpectedCount()} 人出镜后锁定编号`);
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame((t) => void loop(t));
   } catch (err) {
@@ -337,27 +404,31 @@ function onStop(): void {
   landmarker?.close();
   landmarker = null;
   tracker.reset();
-  race.reset();
-  frameBusy = false;
+  clearNumberingLock();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  lastUiKey = "";
-  lastWinnerKey = "";
-  renderHud({ count: 0, people: [] }, null);
+  renderHud(0, [], null, false);
   btnStart.disabled = false;
   btnStop.disabled = true;
   btnReset.disabled = true;
+  btnRelock.disabled = true;
   setStatus("已停止");
 }
 
-function onReset(): void {
+function onResetRound(): void {
   race.reset();
   lastUiKey = "";
   lastWinnerKey = "";
   renderWinner(null);
-  setStatus("已重置 · 等待最先举手");
+  setStatus("已重置本轮 · 编号保持 · 等待最先举手");
+}
+
+function onRelock(): void {
+  clearNumberingLock();
+  setStatus(`已解除编号 · 等待 ${readExpectedCount()} 人出镜后重新排序`);
 }
 
 btnStart.addEventListener("click", () => void onStart());
 btnStop.addEventListener("click", onStop);
-btnReset.addEventListener("click", onReset);
+btnReset.addEventListener("click", onResetRound);
+btnRelock.addEventListener("click", onRelock);
 void checkHealth();

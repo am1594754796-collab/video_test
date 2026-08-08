@@ -136,6 +136,23 @@ button.secondary:disabled {
   opacity: 0.45;
 }
 
+.expected-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.expected-label input {
+  width: 3.25rem;
+  padding: 0.35rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--idle);
+  background: #1a222b;
+  color: var(--fg);
+}
+
 .winner-card {
   min-width: 140px;
   padding: 1rem 1.25rem;

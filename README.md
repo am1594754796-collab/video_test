@@ -5,7 +5,7 @@
 | 页面 | 地址 | 需要 | 说明 |
 |------|------|------|------|
 | 举手单人调试 | http://localhost:5173/ | Node.js | 调 margin / minFrames |
-| **人物编号快版（推荐）** | http://localhost:5173/people-fast.html | Node.js **+ Python** | ~20FPS 相机，**Python 同步排序** |
+| **人物编号快版（推荐）** | http://localhost:5173/people-fast.html | Node.js **+ Python** | 人数达标后 **排序一次锁定**，再只做举手 |
 | 人物编号原版 | http://localhost:5173/people.html | Node.js **+ Python** | ~10FPS，Python 同步排序 |
 
 不含计分 / 抢答流程（解耦在其他模块）。
@@ -104,7 +104,7 @@ npm.cmd run dev
 
 浏览器打开 http://localhost:5173/
 
-**人物编号快版（推荐，~20FPS 相机 + Python 同步排序）：**
+**人物编号快版（推荐：达标锁定编号 → 举手竞态）：**
 
 ```bat
 start-people-fast.bat
@@ -199,20 +199,26 @@ pydantic>=2.0.0
 
 人物页流程：
 
-1. 浏览器按目标帧率采样相机，MediaPipe 检出人物（最多 6，含去重）  
-2. 把本帧每人中心坐标 `{x,y}` **同步** POST 给 Python，等待左→右编号结果  
-3. 页面显示「当前人数」、编号、举手 / 最先举手；API 断开时暂用本地排序  
-4. 若上一帧排序尚未返回，跳过中间 rAF（避免重叠请求）  
+**快版（推荐）**
+
+1. ~20FPS 检测出镜人数  
+2. 当人数 **等于「需要人数」**（默认 2）并连续稳定若干帧 → **调用 Python 排序一次**，把左→右编号锁定到每人的 track  
+3. 之后 **不再排序**，只做举手判定 + 最先举手反馈  
+4. 「下一轮」只清空赢家；「重新编号」解除锁定，重新等人齐再排  
+
+**原版**
+
+1. 每帧检测并 **同步** 请求 Python 排序  
+2. 同时做举手 / 最先举手（适合对照）  
 
 ### 快版 vs 原版
 
 | 项 | `people-fast.html`（推荐） | `people.html`（原版） |
 |----|---------------------------|----------------------|
-| 相机 / 推理目标间隔 | **50ms ≈ 20FPS** | 100ms ≈ 10FPS |
-| 排序请求 | **同步** `await` Python（与原版相同） | 同步 `await` Python |
-| 漏检容忍 | `maxMissed=24`（约 1.2s） | `maxMissed=12`（约 1.2s） |
-| 举手防抖 | 连续 5 帧 | 连续 4 帧 |
-| 检测置信度 | 略松（0.50 / 0.50 / 0.45） | 0.55 / 0.55 / 0.50 |
+| 相机 / 推理 | **≈20FPS** | ≈10FPS |
+| Python 排序 | **人数达标后只排一次并锁定** | 每帧都排 |
+| 锁定后 | 只跑举手 + 最先举手 | 持续重编号 |
+| 需要人数 | 页上可调 1–6（默认 **2**） | 无 |
 | 启动脚本 | `start-people-fast.bat` | `start-people.bat` |
 
 ---
@@ -251,29 +257,34 @@ npm.cmd run lint
 
 ### 人物编号快版（推荐 · `/people-fast.html`）
 
-适合教室实机：更高采样率（约 20FPS），编号仍走 Python **同步**接口。
+流程：**等人齐 → Python 排一次号并锁定 → 只处理举手 / 谁先举手**。
 
 1. 运行 `start-people-fast.bat`（或手动开 Python API + `npm.cmd run dev`）  
 2. 打开 http://localhost:5173/people-fast.html  
-3. 点 **打开相机**；上半身入画、光线尽量均匀  
-4. 看「当前人数」、左→右编号；举手后防抖确认，**最先举手**会闪烁  
-5. 点 **下一轮** 清空赢家再赛  
+3. 确认 **需要人数**（当前默认 **2**，可 1–6）  
+4. 点 **打开相机**；人站好、上半身入画  
+5. 人数达到设定值并稳定约 8 帧后，自动 Python 左→右编号并锁定  
+6. 举手；**最先举手**闪烁；**下一轮**再赛；换人或重排点 **重新编号**  
+
+#### 如何修改「需要人数」
+
+| 改法 | 位置 | 说明 |
+|------|------|------|
+| **页面上改（推荐）** | 快版页控件「需要人数」 | 打开相机前 / 点「重新编号」前改即可，范围 1–6 |
+| **改页面默认值** | `people-fast.html` → `#input-expected` 的 `value="2"` | 下次打开页面的默认人数 |
+| **改代码回退默认** | `src/app/people-board-fast.ts` → `readExpectedCount()` 里的 `return 2` | 输入框无效时的回退值 |
+
+教室若固定 6 人：把上表两处默认改成 `6`，或打开页面后把「需要人数」调到 6。
 
 要点：
 
-- 相机 / Pose 目标约 **20FPS**（间隔 50ms）  
-- 每一有效帧都会 **等待** Python `/api/people/sort` 返回后再刷新编号与竞态  
-- API 未连接或失败时，该帧回退本地左→右排序  
+- 锁定前不做举手竞态，避免号还在变就判定  
+- 锁定后编号跟 track，不再每帧打排序 API  
+- API 失败时用本地左→右规则完成这一次锁定  
 
 ### 人物编号原版（`/people.html`）
 
-对照用，约 **10FPS**，同样是 Python 同步排序。
-
-1. `start-people.bat` 或手动启动 API  
-2. 打开 http://localhost:5173/people.html  
-3. 操作同快版（打开相机 → 举手 → 下一轮）  
-
-页内可点「改用快版」跳转。
+每帧都请求 Python 排序（约 10FPS），适合对照。页内可跳转快版。
 
 ---
 
@@ -316,8 +327,8 @@ video_test/
 
 2. **人物数量 + 左→右编号 + 最先举手**  
    - 原版：`people.html` + `src/app/people-board.ts`（约 10FPS，同步等 Python）  
-   - **快版：`people-fast.html` + `src/app/people-board-fast.ts`（约 20FPS 相机，Python 同步排序）**  
-   - `FirstRaiseTracker`：最先举手 +「下一轮」重置  
+   - **快版：`people-fast.html`：人数达标 → Python 排序一次锁定 → 举手/最先举手**  
+   - `FirstRaiseTracker` + `countLock`：锁定门闩与竞态  
 
 3. **Python 排序服务**  
    - 虚拟环境 `.venv` + `requirements.txt`  

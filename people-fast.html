@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>人物编号 · 快版（20FPS · 同步排序）</title>
+    <title>人物编号 · 快版（锁定后举手）</title>
     <link rel="stylesheet" href="/src/app/people-board.css" />
   </head>
   <body>
@@ -11,8 +11,8 @@
       <header>
         <h1>人物编号 · 快版</h1>
         <p class="sub">
-          ~20FPS 相机检测 · Python 同步左→右编号 · 最先举手闪烁
-          · <a href="/people.html">原版 people（~10FPS）</a>
+          人数达标 → Python 排序一次并锁定 → 只做举手 / 最先举手
+          · <a href="/people.html">原版（每帧排序）</a>
           · <a href="/">举手调试</a>
         </p>
       </header>
@@ -21,6 +21,11 @@
         <button type="button" id="btn-start">打开相机</button>
         <button type="button" id="btn-stop" disabled>关闭</button>
         <button type="button" id="btn-reset" class="secondary" disabled>下一轮</button>
+        <button type="button" id="btn-relock" class="secondary" disabled>重新编号</button>
+        <label class="expected-label">
+          需要人数
+          <input id="input-expected" type="number" min="1" max="6" step="1" value="2" />
+        </label>
         <span id="api-status" class="api-status">Python API: 未连接</span>
       </section>
 
@@ -36,7 +41,7 @@
         <ol id="number-list" class="number-list"></ol>
       </section>
 
-      <p id="status" class="status" role="status">未启动 · 推荐本页（~20FPS · 同步排序）</p>
+      <p id="status" class="status" role="status">未启动 · 人数达标后锁定编号，再检测举手</p>
 
       <div class="stage">
         <video id="video" playsinline autoplay muted></video>
