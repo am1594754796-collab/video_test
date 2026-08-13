@@ -1,3 +1,5 @@
+import { publishClassroomEvent } from "./classroomBus";
+
 type Question = { id: string; answer: string };
 
 type MatchResponse = {
@@ -228,6 +230,14 @@ async function stopAndMatch(): Promise<void> {
     }
     showResult(body);
     setStatus(body.passed ? "匹配通过（≥90%）" : "未达到 90% 匹配");
+    if (body.passed) {
+      publishClassroomEvent({
+        type: "answer-passed",
+        questionId,
+        transcript: body.transcript,
+        source: "speech",
+      });
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     setStatus(`识别失败：${msg}`);

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>计分板 · 举手 + 语音</title>
+    <title>计分板</title>
     <link rel="stylesheet" href="/src/app/scoreboard.css" />
   </head>
   <body>
@@ -11,40 +11,25 @@
       <header class="top">
         <div>
           <p class="brand">教室计分板</p>
-          <h1>视觉编号 · 举手抢答 · 语音加分</h1>
+          <h1>仅展示积分</h1>
         </div>
         <p class="sub">
-          锁定编号后大字显示 → 最先举手持续闪烁 → 答对 +1 停闪
-          · <a href="/people-fast.html">仅视觉</a>
-          · <a href="/speech-online.html">仅语音</a>
+          本页只显示编号与积分。请在独立标签页打开
+          <a href="/people-fast.html" target="_blank" rel="noopener">视觉快版</a>
+          与
+          <a href="/speech-online.html" target="_blank" rel="noopener">语音识别</a>
+          ；最先举手会闪烁，语音答对后 +1 并停闪。
         </p>
       </header>
 
       <section class="controls">
-        <button type="button" id="btn-start">打开相机</button>
-        <button type="button" id="btn-stop" disabled>关闭</button>
-        <button type="button" id="btn-relock" class="secondary" disabled>重新编号</button>
-        <label class="field-inline">
-          需要人数
-          <input id="input-expected" type="number" min="1" max="6" value="2" />
-        </label>
-        <label class="field-inline field-grow">
-          题目
-          <select id="question-select"></select>
-        </label>
-        <button type="button" id="btn-listen" class="secondary" disabled>开始作答</button>
-        <span id="api-status" class="api-status">检查中…</span>
+        <button type="button" id="btn-clear-scores" class="secondary">清空积分</button>
+        <span id="bus-status" class="api-status">等待视觉页锁定编号…</span>
       </section>
 
-      <p id="status" class="status" role="status">打开相机，人数达标后锁定编号</p>
-      <p id="speech-line" class="speech-line" aria-live="polite">转写：—</p>
+      <p id="status" class="status" role="status">打开视觉页完成人数锁定后，此处会显示大字编号</p>
 
       <section id="score-board" class="score-board" aria-live="polite"></section>
-
-      <div class="stage">
-        <video id="video" playsinline autoplay muted></video>
-        <canvas id="overlay"></canvas>
-      </div>
     </main>
     <script type="module" src="/src/app/scoreboard.ts"></script>
   </body>

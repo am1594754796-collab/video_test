@@ -1,21 +1,133 @@
 # 教室抢答模块（视觉 + 语音）
 
-教室场景本地网页：**视觉举手识别** + **语音作答匹配**（解耦，不含计分 / 抢答流程臂装）。
+教室场景本地网页：**视觉举手识别** + **语音作答匹配** + **独立计分板展示**（三页解耦）。
 
 | 页面 | 地址 | 需要 | 说明 |
 |------|------|------|------|
 | 举手单人调试 | http://localhost:5173/ | Node.js | 调 margin / minFrames |
 | **人物编号快版（推荐）· 视频解析 V1.0** | http://localhost:5173/people-fast.html | Node.js **+ Python** | 锁定编号 + 举手竞态 |
 | 人物编号原版 | http://localhost:5173/people.html | Node.js **+ Python** | ~10FPS，Python 同步排序 |
-| **计分板（举手闪烁 + 语音加分）** | http://localhost:5173/scoreboard.html | Node.js **+ Python** · Chrome/Edge | 大号编号；最先举手持续闪烁；答对 +1 停闪 |
+| **计分板（仅展示）** | http://localhost:5173/scoreboard.html | 同域其它页即可 | 大号编号；最先举手持续闪烁；答对 +1 停闪 |
 | **语音作答 · 在线识别 V2.0（推荐）** | http://localhost:5173/speech-online.html | Node.js **+ Python** · **联网** · Chrome/Edge | 实时听写 + DeepSeek 语义 + 10s 限时；通过/超时即停 |
 | 语音作答 · 离线 Whisper | http://localhost:5173/speech.html | Node.js **+ Python** | 按下录音 → 上传 → 本机 Whisper |
 
-视觉 / 语音解耦；计分板页将二者与积分展示联通。
+视觉 / 语音各自独立运行；计分板通过浏览器跨标签页总线订阅二者事件，**本页不嵌相机、不嵌语音**。
 
 仓库：https://github.com/am1594754796-collab/video_test
 
 **换机配置语音 V2.0：** 见 [`docs/SETUP-speech-v2.md`](docs/SETUP-speech-v2.md)
+
+---
+
+## 三大功能：如何启动与注意事项
+
+三个能力**各自独立网页**，可单独用，也可三开联调计分。首次使用前在仓库根目录执行一次：
+
+```bat
+npm.cmd install
+cd python
+python -m venv .venv
+.venv\Scripts\pip.exe install -r requirements.txt
+cd ..
+```
+
+| 端口 | 服务 |
+|------|------|
+| `5173` | Vite 前端（所有网页） |
+| `8765` | Python API（编号排序 / 语音匹配） |
+
+**不要同时开多个** `start-*.bat`（会抢同一套端口）。已有 Vite + API 在跑时，只需再开对应网页标签即可。
+
+---
+
+### 1. 视频解析（举手 / 编号）· 推荐快版
+
+| 项 | 说明 |
+|----|------|
+| 启动 | 双击 `start-people-fast.bat` |
+| 页面 | http://localhost:5173/people-fast.html |
+| 需要 | Node.js + Python；本机相机；Chrome / Edge 优先 |
+| 对照页 | `start-people.bat` → `people.html`（每帧排序，更慢） |
+
+**操作：** 点「开始」→ 人数达到设定值并稳定后自动左→右锁定编号 → 举手 / 最先举手 →「下一轮」清赢家；「重新编号」可重排。
+
+**注意：**
+
+- 须用 **`http://localhost:5173`**（非 `file://`），否则无摄像头权限  
+- Windows：设置 → 隐私 → 相机 → 允许浏览器使用  
+- 页顶须显示 **Python API: 已连接**（排序依赖 `8765`）  
+- 默认期望人数可在页内修改（调试常用 2；教室可改 1–6）  
+- 短暂丢检会按座位位置尽量找回原号；大挪位请点「重新编号」
+
+---
+
+### 2. 语音作答 · 推荐在线 V2.0
+
+| 项 | 说明 |
+|----|------|
+| 启动 | 双击 `start-speech-online.bat` |
+| 页面 | http://localhost:5173/speech-online.html |
+| 需要 | Node.js + Python；**联网**；麦克风；**Chrome / Edge** |
+| 对照页 | `start-speech.bat` → `speech.html`（离线 Whisper，无实时听写） |
+
+**操作：** 确认 API 已连接 → 选题 →「开始识别」→ **10 秒内**边说边匹配 → 答对即停 / 超时结束。
+
+**注意：**
+
+- 须先配置 `python/data/online.env`（从 `online.env.example` 复制），填入 DeepSeek Key；改完**重启** uvicorn。详见 [`docs/SETUP-speech-v2.md`](docs/SETUP-speech-v2.md)  
+- `online.env` **不要提交 Git**  
+- 答案库默认 `python/data/answers.json`（由 `answers.path` 指向）  
+- 匹配 ≥ **90%** 判对（字形 / 拼音 / 语义取最高）  
+- 非 Chrome/Edge 或无网时，在线听写与语义可能不可用  
+
+---
+
+### 3. 计分板（仅展示）
+
+| 项 | 说明 |
+|----|------|
+| 启动 | 双击 `start-scoreboard.bat`（会顺带打开视觉快版 + 语音页） |
+| 页面 | http://localhost:5173/scoreboard.html |
+| 需要 | 与视觉、语音页**同源同端口**（均为 `localhost:5173`）；本页**不**开相机、**不**开麦克风 |
+
+**联调流程：**
+
+1. 视觉页锁定编号 → 计分板出现大字 `#N`  
+2. 最先举手 → 该号**持续闪烁**  
+3. 语音页答对 → 该号 **积分 +1** 并**停闪**  
+4. 视觉页点「下一轮」→ 再抢下一题  
+
+无相机时可用模拟页验证总线：http://localhost:5173/bus-sim.html（先开计分板，再按 1→2→3 点按钮）。
+
+**注意：**
+
+- 计分板只**订阅**其它页事件（`BroadcastChannel`）；三页必须同一浏览器、同一主机名与端口  
+- 只开计分板、不开视觉/语音 → 不会有编号与加分  
+- 积分在当前标签页内存中，刷新计分板会清空积分  
+- 答对停闪后，须在视觉页「下一轮」才会再次产生「最先举手」信号  
+
+---
+
+### 三页一起用时怎么开
+
+**方式 A（推荐）：** 只跑一次 `start-scoreboard.bat`，它会起 API + Vite，并打开三页。
+
+**方式 B：** 已用 `start-people-fast.bat` 或 `start-speech-online.bat` 起好服务后，在同一浏览器再打开其余地址即可，例如：
+
+- http://localhost:5173/people-fast.html  
+- http://localhost:5173/speech-online.html  
+- http://localhost:5173/scoreboard.html  
+
+**手动两终端（调试）：**
+
+```bat
+cd python
+.venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8765
+```
+
+```bat
+npm.cmd run dev
+```
 
 ---
 
@@ -252,15 +364,15 @@ start-people.bat
 
 打开 http://localhost:5173/people.html  
 
-**计分板（大号编号 · 举手闪烁 · 语音答对加分）：**
+**计分板（仅展示 · 需与视觉/语音同开三标签）：**
 
 ```bat
 start-scoreboard.bat
 ```
 
-打开 http://localhost:5173/scoreboard.html  
+打开 http://localhost:5173/scoreboard.html（脚本也会顺带打开视觉快版与语音页）。
 
-流程：人数锁定 → 大字显示各号积分 → 最先举手**持续闪烁** → 选题作答（Web Speech）→ 匹配通过后该号 **+1** 并停闪 → 可再举手抢答。需 Chrome/Edge 与联网（同语音 V2）。
+流程：视觉页锁定编号 → 计分板大字显示各号 → 最先举手后该号**持续闪烁** → 语音页答对 → 该号 **+1 并停闪** → 视觉页点「下一轮」后再赛。三页须同源（均为 `localhost:5173`）。
 
 **语音作答 · 在线识别 V2.0（推荐：实时听写 + DeepSeek 语义 + 10s 限时）：**
 
@@ -308,14 +420,16 @@ npm.cmd run dev
 
 ## 一键启动速查
 
+> 三大功能的启动步骤与注意事项见上方 **[三大功能：如何启动与注意事项](#三大功能如何启动与注意事项)**。
+
 | 脚本 | 作用 |
 |------|------|
 | `start.bat` / `start.ps1` | 举手单人调试 |
-| `start-people-fast.bat` | **推荐** 人物快版 + Python（视频解析 V1.0） |
-| `start-people.bat` | 人物原版 + Python（~10FPS 同步排序） |
-| `start-scoreboard.bat` | **计分板**：视觉锁定 + 举手闪烁 + 语音答对加分 |
-| `start-speech-online.bat` | **推荐** 语音在线识别 V2.0 + Python 匹配 |
-| `start-speech.bat` | 语音离线 Whisper + Python |
+| `start-people-fast.bat` | **① 视频解析**（人物快版 V1.0） |
+| `start-people.bat` | 人物原版（~10FPS 同步排序） |
+| `start-speech-online.bat` | **② 语音作答**（在线 V2.0） |
+| `start-speech.bat` | 语音离线 Whisper |
+| `start-scoreboard.bat` | **③ 计分板** + 顺带打开视觉/语音三标签 |
 
 ### PowerShell 报错「禁止运行脚本」
 

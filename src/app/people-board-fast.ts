@@ -27,6 +27,7 @@ import {
   type TrackedPose,
 } from "../vision";
 import { POSE } from "../vision/detect/isHandRaised";
+import { publishClassroomEvent } from "./classroomBus";
 
 const DETECT_INTERVAL_MS = 50;
 const RAISE_MARGIN = 0.08;
@@ -191,11 +192,22 @@ async function lockNumbering(payload: PersonPoint[]): Promise<void> {
     race = new FirstRaiseTracker();
     lastUiKey = "";
     lastWinnerKey = "";
+    publishClassroomEvent({
+      type: "numbering-locked",
+      seats: sorted.people.map((p) => p.index),
+      source: "people-fast",
+    });
     setStatus(`已锁定 ${sorted.count} 人编号 · 开始举手检测`);
   } catch {
     setApiStatus(false, "排序失败，已用本地锁定");
-    applyLockFromSort(sortLocal(payload));
+    const local = sortLocal(payload);
+    applyLockFromSort(local);
     race = new FirstRaiseTracker();
+    publishClassroomEvent({
+      type: "numbering-locked",
+      seats: local.people.map((p) => p.index),
+      source: "people-fast",
+    });
     setStatus(`本地锁定 ${payload.length} 人编号 · 开始举手检测`);
   } finally {
     sortInFlight = false;
@@ -230,6 +242,11 @@ function renderWinner(winner: FirstRaiseEvent | null): void {
     winnerValue.style.animation = "none";
     void winnerValue.offsetWidth;
     winnerValue.style.animation = "";
+    publishClassroomEvent({
+      type: "first-raise",
+      personIndex: winner.personIndex,
+      source: "people-fast",
+    });
   } else {
     winnerValue.textContent = "—";
     winnerCard.classList.remove("has-winner");
@@ -330,8 +347,8 @@ function clearNumberingLock(): void {
   lockedPeople = [];
   race = new FirstRaiseTracker();
   lastUiKey = "";
-  lastWinnerKey = "";
   renderWinner(null);
+  publishClassroomEvent({ type: "numbering-cleared", source: "people-fast" });
 }
 
 async function loop(nowMs: number): Promise<void> {
@@ -468,8 +485,8 @@ function onStop(): void {
 function onResetRound(): void {
   race.reset();
   lastUiKey = "";
-  lastWinnerKey = "";
   renderWinner(null);
+  publishClassroomEvent({ type: "race-reset", source: "people-fast" });
   setStatus("已重置本轮 · 编号保持 · 等待最先举手");
 }
 

@@ -1,3 +1,5 @@
+import { publishClassroomEvent } from "./classroomBus";
+
 type Question = { id: string; answer: string };
 
 type MatchResponse = {
@@ -289,6 +291,12 @@ async function matchNow(transcript: string, opts?: { force?: boolean }): Promise
     showMatchFields(body, text);
     if (body.passed) {
       setStatus(`匹配通过（≥90%）· ${text}`);
+      publishClassroomEvent({
+        type: "answer-passed",
+        questionId,
+        transcript: text,
+        source: "speech-online",
+      });
       if (listening) {
         stopOnPass(text);
       }

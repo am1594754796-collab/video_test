@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>计分板总线模拟</title>
+    <style>
+      body {
+        font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        margin: 1.5rem;
+        background: #12161c;
+        color: #eef2f6;
+      }
+      h1 {
+        font-size: 1.25rem;
+      }
+      p {
+        color: #8b98a5;
+        max-width: 40rem;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin: 1rem 0;
+      }
+      button {
+        border: 0;
+        border-radius: 8px;
+        padding: 0.55rem 0.9rem;
+        background: #3d9cfd;
+        color: #061018;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #2a3540;
+        color: #eef2f6;
+      }
+      #log {
+        white-space: pre-wrap;
+        background: #1a2129;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        min-height: 8rem;
+        font-size: 0.9rem;
+      }
+      a {
+        color: #3d9cfd;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>计分板总线模拟（无相机 / 无麦克风）</h1>
+    <p>
+      请先打开
+      <a href="/scoreboard.html" target="_blank" rel="noopener">计分板</a>
+      ，再点下面按钮，观察另一标签页的大字编号、闪烁与加分。
+    </p>
+    <div class="row">
+      <button type="button" id="btn-lock">1. 锁定编号 #1 #2</button>
+      <button type="button" id="btn-raise">2. #1 最先举手</button>
+      <button type="button" id="btn-pass">3. 语音答对</button>
+      <button type="button" id="btn-reset" class="secondary">下一轮重置</button>
+      <button type="button" id="btn-clear" class="secondary">清空积分</button>
+    </div>
+    <div id="log"></div>
+    <script type="module">
+      import { publishClassroomEvent } from "/src/app/classroomBus.ts";
+
+      const logEl = document.querySelector("#log");
+      function log(msg) {
+        const t = new Date().toLocaleTimeString();
+        logEl.textContent = `[${t}] ${msg}\n` + logEl.textContent;
+      }
+
+      document.querySelector("#btn-lock").addEventListener("click", () => {
+        publishClassroomEvent({ type: "numbering-locked", seats: [1, 2], source: "bus-sim" });
+        log("已发 numbering-locked → seats [1,2]");
+      });
+      document.querySelector("#btn-raise").addEventListener("click", () => {
+        publishClassroomEvent({ type: "first-raise", personIndex: 1, source: "bus-sim" });
+        log("已发 first-raise → #1 应持续闪烁");
+      });
+      document.querySelector("#btn-pass").addEventListener("click", () => {
+        publishClassroomEvent({
+          type: "answer-passed",
+          transcript: "模拟答对",
+          source: "bus-sim",
+        });
+        log("已发 answer-passed → #1 应 +1 并停闪");
+      });
+      document.querySelector("#btn-reset").addEventListener("click", () => {
+        publishClassroomEvent({ type: "race-reset", source: "bus-sim" });
+        log("已发 race-reset");
+      });
+      document.querySelector("#btn-clear").addEventListener("click", () => {
+        publishClassroomEvent({ type: "scores-clear", source: "bus-sim" });
+        log("已发 scores-clear");
+      });
+
+      log("就绪。按 1→2→3 顺序点，对照计分板。");
+    </script>
+  </body>
+</html>
