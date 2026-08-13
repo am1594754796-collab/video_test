@@ -12,6 +12,7 @@ export default defineConfig({
         peopleFast: resolve(__dirname, "people-fast.html"),
         speech: resolve(__dirname, "speech.html"),
         speechOnline: resolve(__dirname, "speech-online.html"),
+        scoreboard: resolve(__dirname, "scoreboard.html"),
       },
     },
   },

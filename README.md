@@ -7,10 +7,11 @@
 | 举手单人调试 | http://localhost:5173/ | Node.js | 调 margin / minFrames |
 | **人物编号快版（推荐）· 视频解析 V1.0** | http://localhost:5173/people-fast.html | Node.js **+ Python** | 锁定编号 + 举手竞态 |
 | 人物编号原版 | http://localhost:5173/people.html | Node.js **+ Python** | ~10FPS，Python 同步排序 |
+| **计分板（举手闪烁 + 语音加分）** | http://localhost:5173/scoreboard.html | Node.js **+ Python** · Chrome/Edge | 大号编号；最先举手持续闪烁；答对 +1 停闪 |
 | **语音作答 · 在线识别 V2.0（推荐）** | http://localhost:5173/speech-online.html | Node.js **+ Python** · **联网** · Chrome/Edge | 实时听写 + DeepSeek 语义 + 10s 限时；通过/超时即停 |
 | 语音作答 · 离线 Whisper | http://localhost:5173/speech.html | Node.js **+ Python** | 按下录音 → 上传 → 本机 Whisper |
 
-不含计分 / 抢答流程（解耦在其他模块）。
+视觉 / 语音解耦；计分板页将二者与积分展示联通。
 
 仓库：https://github.com/am1594754796-collab/video_test
 
@@ -251,6 +252,16 @@ start-people.bat
 
 打开 http://localhost:5173/people.html  
 
+**计分板（大号编号 · 举手闪烁 · 语音答对加分）：**
+
+```bat
+start-scoreboard.bat
+```
+
+打开 http://localhost:5173/scoreboard.html  
+
+流程：人数锁定 → 大字显示各号积分 → 最先举手**持续闪烁** → 选题作答（Web Speech）→ 匹配通过后该号 **+1** 并停闪 → 可再举手抢答。需 Chrome/Edge 与联网（同语音 V2）。
+
 **语音作答 · 在线识别 V2.0（推荐：实时听写 + DeepSeek 语义 + 10s 限时）：**
 
 ```bat
@@ -302,6 +313,7 @@ npm.cmd run dev
 | `start.bat` / `start.ps1` | 举手单人调试 |
 | `start-people-fast.bat` | **推荐** 人物快版 + Python（视频解析 V1.0） |
 | `start-people.bat` | 人物原版 + Python（~10FPS 同步排序） |
+| `start-scoreboard.bat` | **计分板**：视觉锁定 + 举手闪烁 + 语音答对加分 |
 | `start-speech-online.bat` | **推荐** 语音在线识别 V2.0 + Python 匹配 |
 | `start-speech.bat` | 语音离线 Whisper + Python |
 
@@ -543,6 +555,7 @@ A: 不要复制 `node_modules` / `.venv`；按本文「换机部署完整流程�
 
 ## 文档索引
 
+- **需求汇总：** [`docs/需求/README.md`](docs/需求/README.md)  
 - 规格：`SPEC.md`  
 - 意图：`docs/intent/hand-raise-vision.md`  
 - 任务：`tasks/todo.md`  

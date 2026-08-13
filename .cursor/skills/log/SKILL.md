@@ -1,12 +1,14 @@
 ---
 name: log
-description: Append or create today's engineering worklog under docs/worklog/. Use when the user runs /log or asks to write 研发日志.
+description: Append or create today's engineering worklog under docs/worklog/. Use when the user runs /log or asks to write 研发日志 / 每日工作记录.
 disable-model-invocation: true
 ---
 
 # /log
 
-Read and follow `.cursor/skills/dev-worklog/SKILL.md`.
+Read and follow `.cursor/skills/daily-work-record/SKILL.md`（每日工作记录）。
+
+> 兼容旧路径：若需对照原英文说明，见 `.cursor/skills/dev-worklog/SKILL.md`；**以 `daily-work-record` 为准。**
 
 ## Default
 

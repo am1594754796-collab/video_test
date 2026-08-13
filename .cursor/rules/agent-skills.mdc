@@ -26,7 +26,7 @@ When the user invokes these, follow the matching command skill (human-triggered)
 | `/code-simplify` | `.cursor/skills/code-simplify/SKILL.md` |
 | `/ship` | `.cursor/skills/ship/SKILL.md` |
 | `/webperf` | `.cursor/skills/webperf/SKILL.md` |
-| `/log` | `.cursor/skills/log/SKILL.md` |
+| `/log` | `.cursor/skills/log/SKILL.md` → `daily-work-record` |
 
 ## Artifacts
 
@@ -38,4 +38,4 @@ Treat these as living documents while the work is in progress.
 
 ## Worklog
 
-After a meaningful `/spec`, `/plan`, `/build`, `/review`, or `/ship` slice — or when the user is about to end the session — follow `.cursor/skills/dev-worklog/SKILL.md` and append today's entry (or remind the user to run `/log`). Do not invent progress.
+After a meaningful `/spec`, `/plan`, `/build`, `/review`, or `/ship` slice — or when the user is about to end the session — follow `.cursor/skills/daily-work-record/SKILL.md` and append today's entry (or remind the user to run `/log`). Do not invent progress.

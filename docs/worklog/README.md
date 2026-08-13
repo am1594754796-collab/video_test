@@ -1,6 +1,6 @@
-# 研发日志（Dev Worklog）
+# 每日工作记录（Dev Worklog）
 
-按日记录研发过程，便于换会话、交接和回溯。
+按日记录工作过程，便于换会话、交接和回溯。
 
 ## 约定
 
@@ -10,14 +10,18 @@
   - 标题：`## Session: YYYY-MM-DD HH:mm–HH:mm (UTC+8)`
   - 字段：`Logged at`（写入时刻）、`Start`、`End`
   - `Done` / `Decisions` 条目尽量带 `HH:mm`
-- 内容要对齐：`SPEC.md`（做什么）、`tasks/todo.md`（做到哪）、Git commits（改了什么）
+- 内容对齐：`SPEC.md`、`tasks/todo.md`、Git commits（若有）
 
 ## 怎么写
 
-在 Cursor Agent 聊天中：
+在 Cursor Agent 聊天中任选一种说法：
 
 ```
 /log
+```
+
+```
+写一下每日工作记录
 ```
 
 ```
@@ -25,7 +29,7 @@
 ```
 
 ```
-/log 今天完成了关节限位校验，下一步接轨迹插值；卡在示教器协议文档不全
+/log 今天完成了座位槽位重绑，下一步实机两人验收；卡在对调站位会串号
 ```
 
-Agent 会按 `.cursor/skills/dev-worklog/SKILL.md` 落盘。
+Agent 会按 `.cursor/skills/daily-work-record/SKILL.md` 落盘。
