@@ -70,15 +70,15 @@ cd ..
 | 需要 | Node.js + Python；**联网**；麦克风；**Chrome / Edge** |
 | 对照页 | `start-speech.bat` → `speech.html`（离线 Whisper，无实时听写） |
 
-**操作：** 确认 API 已连接 → 选题 →「开始识别」→ **10 秒内**边说边匹配 → 答对即停 / 超时结束。
+**操作：** 确认 API 已连接 → 选题 →「扬声器读题」（题干+ABCD）→「开始识别」→ **10 秒内**边说边匹配 → 答对即停 / 超时结束。
 
 **注意：**
 
 - 须先配置 `python/data/online.env`（从 `online.env.example` 复制），填入 DeepSeek Key；改完**重启** uvicorn。详见 [`docs/SETUP-speech-v2.md`](docs/SETUP-speech-v2.md)  
 - `online.env` **不要提交 Git**  
-- 答案库默认 `python/data/answers.json`（由 `answers.path` 指向）  
-- 匹配 ≥ **90%** 判对（字形 / 拼音 / 语义取最高）  
-- 非 Chrome/Edge 或无网时，在线听写与语义可能不可用  
+- 答案库默认 `python/data/answers.json`（由 `answers.path` 指向）；选择题请写 `prompt` + `options` A–D  
+- 匹配 ≥ **90%** 判对（字形 / 拼音 / 语义取最高）；读题**不会**念出 `answer`  
+- 非 Chrome/Edge 或无网时，在线听写与语义可能不可用；读题需本机扬声器与中文语音包  
 
 ---
 
@@ -181,9 +181,20 @@ http://localhost:5173/speech-online.html
 
 需：**联网**、**Chrome / Edge**、麦克风权限。
 
-#### 2. 答案库（题目 / 标准答案）
+#### 2. 答案库（题目 / 选项 / 标准答案）
 
-编辑 `python/data/answers.json`（一题唯一 `answer`），例如已含短答 Q1/Q2 与整句 Q3。
+编辑 `python/data/answers.json`。选择题推荐带题干与 A–D（供扬声器朗读）：
+
+```json
+{
+  "id": "Q1",
+  "prompt": "中国的首都是哪里？",
+  "options": { "A": "上海", "B": "北京", "C": "广州", "D": "深圳" },
+  "answer": "北京"
+}
+```
+
+`answer` 只用于匹配，**不会**被扬声器读出。详见 `python/data/README.md`。
 
 默认指向由 `python/data/answers.path` 决定，内容为相对 **`python/`** 的路径，例如：
 
@@ -214,8 +225,9 @@ SPEECH_LLM_MODEL=deepseek-chat
 
 1. 确认页顶 Python API 已连接  
 2. 选题（整句测 **Q3**）  
-3. **按下开始识别** → 开始 10s 倒计时与实时转写/匹配  
-4. **答对** → 立即停止；**超时** → 自动结束并出最终结果  
+3. 点 **扬声器读题** → 朗读题干与 A/B/C/D（不含标准答案）  
+4. **按下开始识别** → 开始 10s 倒计时与实时转写/匹配  
+5. **答对** → 立即停止；**超时** → 自动结束并出最终结果  
 
 #### 5. 可选开关
 

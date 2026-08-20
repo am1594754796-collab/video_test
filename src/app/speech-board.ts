@@ -1,6 +1,13 @@
 import { publishClassroomEvent } from "./classroomBus";
+import {
+  fillQuestionSelect,
+  findQuestion,
+  renderQuestionPreview,
+  type BankQuestion,
+} from "./questionUi";
+import { speakQuestion, stopSpeaking } from "./speakQuestion";
 
-type Question = { id: string; answer: string };
+type Question = BankQuestion;
 
 type MatchResponse = {
   question_id: string;
@@ -17,13 +24,17 @@ const questionSelect = document.querySelector<HTMLSelectElement>("#question-sele
 const answersPathInput = document.querySelector<HTMLInputElement>("#answers-path")!;
 const btnLoadBank = document.querySelector<HTMLButtonElement>("#btn-load-bank")!;
 const btnRecord = document.querySelector<HTMLButtonElement>("#btn-record")!;
+const btnSpeak = document.querySelector<HTMLButtonElement>("#btn-speak");
+const btnSpeakStop = document.querySelector<HTMLButtonElement>("#btn-speak-stop");
 const apiStatus = document.querySelector<HTMLElement>("#api-status")!;
 const statusEl = document.querySelector<HTMLElement>("#status")!;
+const questionPreview = document.querySelector<HTMLElement>("#question-preview");
 const outTranscript = document.querySelector<HTMLElement>("#out-transcript")!;
 const outExpected = document.querySelector<HTMLElement>("#out-expected")!;
 const outScore = document.querySelector<HTMLElement>("#out-score")!;
 const outPassed = document.querySelector<HTMLElement>("#out-passed")!;
 
+let questions: Question[] = [];
 let mediaStream: MediaStream | null = null;
 let mediaRecorder: MediaRecorder | null = null;
 let chunks: BlobPart[] = [];
@@ -94,19 +105,38 @@ async function loadQuestions(): Promise<void> {
   if (data.relative_path) {
     answersPathInput.value = data.relative_path.replace(/\\/g, "/");
   }
-  questionSelect.innerHTML = "";
-  for (const q of data.questions) {
-    const opt = document.createElement("option");
-    opt.value = q.id;
-    opt.textContent = `${q.id} · 答案：${q.answer}`;
-    questionSelect.appendChild(opt);
+  applyQuestions(data.questions);
+}
+
+function applyQuestions(list: Question[]): void {
+  questions = list;
+  fillQuestionSelect(questionSelect, questions);
+  const n = questions.length;
+  btnRecord.disabled = n === 0;
+  if (btnSpeak) btnSpeak.disabled = n === 0;
+  syncPreviewFromSelect();
+  if (n === 0) setStatus("答案库为空");
+}
+
+function syncPreviewFromSelect(): void {
+  renderQuestionPreview(questionPreview, findQuestion(questions, questionSelect.value));
+}
+
+function onSpeakQuestion(): void {
+  const q = findQuestion(questions, questionSelect.value);
+  if (!q) {
+    setStatus("请先选择题目");
+    return;
   }
-  if (data.questions.length === 0) {
-    setStatus("答案库为空");
-    btnRecord.disabled = true;
-  } else {
-    btnRecord.disabled = false;
+  if (recording) {
+    setStatus("录音中请先结束，再读题");
+    return;
   }
+  const ok = speakQuestion(q, {
+    onEnd: () => setStatus(`读题结束 · ${q.id} · 可开始录音`),
+    onError: (msg) => setStatus(msg),
+  });
+  if (ok) setStatus(`正在朗读 ${q.id} 题干与选项（不含标准答案）…`);
 }
 
 async function loadAnswerBankFromInput(): Promise<void> {
@@ -134,30 +164,25 @@ async function loadAnswerBankFromInput(): Promise<void> {
     if (body.relative_path) {
       answersPathInput.value = body.relative_path.replace(/\\/g, "/");
     }
-    questionSelect.innerHTML = "";
-    for (const q of body.questions ?? []) {
-      const opt = document.createElement("option");
-      opt.value = q.id;
-      opt.textContent = `${q.id} · 答案：${q.answer}`;
-      questionSelect.appendChild(opt);
-    }
+    applyQuestions(body.questions ?? []);
     const n = body.questions?.length ?? 0;
-    btnRecord.disabled = n === 0;
     setStatus(
       n > 0
-        ? `已加载 ${answersPathInput.value}（${n} 题）`
+        ? `已加载 ${answersPathInput.value}（${n} 题）。选题后可点「扬声器读题」`
         : "答案库为空",
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     setStatus(`加载答案库失败：${msg}`);
     btnRecord.disabled = true;
+    if (btnSpeak) btnSpeak.disabled = true;
   } finally {
     btnLoadBank.disabled = false;
   }
 }
 
 async function startRecording(): Promise<void> {
+  stopSpeaking();
   const mime = pickMimeType();
   mediaStream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -250,6 +275,24 @@ async function stopAndMatch(): Promise<void> {
 
 btnLoadBank.addEventListener("click", () => {
   void loadAnswerBankFromInput();
+});
+
+questionSelect.addEventListener("change", () => {
+  stopSpeaking();
+  syncPreviewFromSelect();
+  const q = findQuestion(questions, questionSelect.value);
+  if (!q) return;
+  setStatus(`已选 ${q.id} · 正在朗读题干与选项…`);
+  speakQuestion(q, {
+    onEnd: () => setStatus(`读题结束 · ${q.id} · 可开始录音`),
+    onError: (msg) => setStatus(msg),
+  });
+});
+
+btnSpeak?.addEventListener("click", () => onSpeakQuestion());
+btnSpeakStop?.addEventListener("click", () => {
+  stopSpeaking();
+  setStatus("已停止朗读");
 });
 
 btnRecord.addEventListener("click", async () => {

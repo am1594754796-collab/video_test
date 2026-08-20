@@ -185,3 +185,29 @@ button.recording {
   background: color-mix(in srgb, var(--bad) 35%, transparent);
   color: var(--bad);
 }
+
+.question-preview {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--idle);
+  background: #151c24;
+}
+
+.question-preview .qp-prompt {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  line-height: 1.45;
+  color: var(--fg);
+}
+
+.question-preview .qp-options {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.question-preview .qp-options li {
+  margin: 0.15rem 0;
+}
