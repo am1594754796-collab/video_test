@@ -5,7 +5,7 @@
 | 页面 | 地址 | 需要 | 说明 |
 |------|------|------|------|
 | 举手单人调试 | http://localhost:5173/ | Node.js | 调 margin / minFrames |
-| **人物编号快版（推荐）· 视频解析 V1.0** | http://localhost:5173/people-fast.html | Node.js **+ Python** | 锁定编号 + 人脸绑座 + 举手竞态 |
+| **人物编号 · 视频回放检测** | http://localhost:5173/people-video.html | Node.js **+ Python** | 本地视频：编号 + 人脸绑座 + 举手 |
 | 人物编号原版 | http://localhost:5173/people.html | Node.js **+ Python** | ~10FPS，Python 同步排序 |
 | **计分板（仅展示）** | http://localhost:5173/scoreboard.html | 同域其它页即可 | 大号编号；最先举手持续闪烁；答对 +1 停闪 |
 | **语音作答 · 在线识别 V2.0（推荐）** | http://localhost:5173/speech-online.html | Node.js **+ Python** · **联网** · Chrome/Edge | 实时听写 + DeepSeek 语义 + 10s 限时；通过/超时即停 |
@@ -49,7 +49,9 @@ cd ..
 | 需要 | Node.js + Python；本机相机；Chrome / Edge 优先 |
 | 对照页 | `start-people.bat` → `people.html`（每帧排序，更慢） |
 
-**操作：** 点「开始」→ 人数达到设定值并稳定后自动左→右锁定编号 → 举手 / 最先举手 →「下一轮」清赢家；「重新编号」可重排。
+**操作：** 点「开始」→ 人数达到设定值并稳定后自动左→右锁定编号并绑人脸 → 举手 / 最先举手 →「下一轮」清赢家；「重新编号」可重排。
+
+离线用本地视频验收同一套能力：`start-people-video.bat` → http://localhost:5173/people-video.html  
 
 **注意：**
 
@@ -437,7 +439,8 @@ npm.cmd run dev
 | 脚本 | 作用 |
 |------|------|
 | `start.bat` / `start.ps1` | 举手单人调试 |
-| `start-people-fast.bat` | **① 视频解析**（人物快版 V1.0） |
+| `start-people-fast.bat` | **① 视频解析**（人物快版 V1.0 · 相机） |
+| `start-people-video.bat` | **①′ 视频文件回放检测**（同逻辑，本地视频） |
 | `start-people.bat` | 人物原版（~10FPS 同步排序） |
 | `start-speech-online.bat` | **② 语音作答**（在线 V2.0） |
 | `start-speech.bat` | 语音离线 Whisper |

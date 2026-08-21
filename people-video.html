@@ -3,24 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>人物编号 · 快版（锁定后举手）</title>
+    <title>人物编号 · 视频回放检测</title>
     <link rel="stylesheet" href="/src/app/people-board.css" />
   </head>
   <body>
     <main class="app">
       <header>
-        <h1>人物编号 · 快版</h1>
+        <h1>人物编号 · 视频回放检测</h1>
         <p class="sub">
-          人数达标 → 左→右锁定编号并绑定人脸 → 举手 / 最先举手（丢检优先人脸找回座位号）
-          · <a href="/people.html">原版（每帧排序）</a>
-          · <a href="/people-video.html">视频回放检测</a>
-          · <a href="/">举手调试</a>
+          选择本地视频 → 开始检测：左→右编号、人脸绑座、举手 / 最先举手（逻辑同快版，不用相机）
+          · <a href="/people-fast.html">相机快版</a>
+          · <a href="/scoreboard.html">计分板</a>
         </p>
       </header>
 
       <section class="controls">
-        <button type="button" id="btn-start">打开相机</button>
-        <button type="button" id="btn-stop" disabled>关闭</button>
+        <label class="file-label secondary">
+          选择视频
+          <input id="input-video" type="file" accept="video/*" />
+        </label>
+        <button type="button" id="btn-start" disabled>开始检测</button>
+        <button type="button" id="btn-pause" class="secondary" disabled>暂停视频</button>
+        <button type="button" id="btn-stop" disabled>停止检测</button>
         <button type="button" id="btn-reset" class="secondary" disabled>下一轮</button>
         <button type="button" id="btn-relock" class="secondary" disabled>重新编号</button>
         <label class="expected-label">
@@ -28,6 +32,13 @@
           <input id="input-expected" type="number" min="1" max="6" step="1" value="2" />
         </label>
         <span id="api-status" class="api-status">Python API: 未连接</span>
+      </section>
+
+      <p id="file-name" class="file-name">未选择文件</p>
+
+      <section class="controls video-seek">
+        <input id="seek" type="range" min="0" max="0" step="0.01" value="0" disabled />
+        <span id="time-label" class="api-status">0:00 / 0:00</span>
       </section>
 
       <section class="hud" aria-live="polite">
@@ -42,13 +53,13 @@
         <ol id="number-list" class="number-list"></ol>
       </section>
 
-      <p id="status" class="status" role="status">未启动 · 人数达标后锁定编号，再检测举手</p>
+      <p id="status" class="status" role="status">请选择本地视频文件，再点「开始检测」</p>
 
       <div class="stage">
-        <video id="video" playsinline autoplay muted></video>
+        <video id="video" playsinline muted></video>
         <canvas id="overlay"></canvas>
       </div>
     </main>
-    <script type="module" src="/src/app/people-board-fast.ts"></script>
+    <script type="module" src="/src/app/people-board-video.ts"></script>
   </body>
 </html>

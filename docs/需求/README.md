@@ -57,8 +57,8 @@
 
 | 项 | 说明 |
 |----|------|
-| 页面 | http://localhost:5173/people-fast.html |
-| 启动 | `start-people-fast.bat` |
+| 页面 | http://localhost:5173/people-fast.html（相机）· http://localhost:5173/people-video.html（本地视频） |
+| 启动 | `start-people-fast.bat` / `start-people-video.bat` |
 | 流程 | 人数达标并稳定 → **Python 左→右排序一次并锁定** → 之后只做举手与「谁先举手」 |
 | 身份 | 锁定时左→右编号，并给人脸建会话模板；丢检后优先**人脸**再按座位位置找回原编号 |
 

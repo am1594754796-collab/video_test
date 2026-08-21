@@ -153,6 +153,38 @@ button.secondary:disabled {
   color: var(--fg);
 }
 
+.file-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 8px;
+  padding: 0.55rem 0.9rem;
+  background: #2a3642;
+  color: var(--fg);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.file-label input {
+  display: none;
+}
+
+.file-name {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.video-seek {
+  align-items: center;
+  margin-top: 0;
+}
+
+.video-seek input[type="range"] {
+  flex: 1 1 220px;
+  min-width: 160px;
+}
+
 .winner-card {
   min-width: 140px;
   padding: 1rem 1.25rem;
