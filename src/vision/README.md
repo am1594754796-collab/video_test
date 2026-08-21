@@ -4,7 +4,10 @@
 
 - `detect/isHandRaised.ts` — 腕相对肘的举手谓词（不必过肩）  
 - `detect/raiseDebouncer.ts` — 连续帧防抖  
+- `detect/faceDetector.ts` / `faceDescriptor.ts` — 会话内人脸检测与座位号绑定  
+- `detect/numberingSlots.ts` — 座位槽位：人脸优先 + 位置兜底  
 - `detect/poseLandmarker.ts` — MediaPipe Pose Landmarker 配置（`VIDEO` + `numPoses`）  
 - `camera/` — `getUserMedia`  
 
 不含计分、抢答流程。调参默认：`margin=0.05`（腕高于肘），`minFrames=4`（演示页可改）。
+人脸绑定为**当次锁定会话**模板，不是姓名/学号底库。

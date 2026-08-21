@@ -5,7 +5,7 @@
 | 页面 | 地址 | 需要 | 说明 |
 |------|------|------|------|
 | 举手单人调试 | http://localhost:5173/ | Node.js | 调 margin / minFrames |
-| **人物编号快版（推荐）· 视频解析 V1.0** | http://localhost:5173/people-fast.html | Node.js **+ Python** | 锁定编号 + 举手竞态 |
+| **人物编号快版（推荐）· 视频解析 V1.0** | http://localhost:5173/people-fast.html | Node.js **+ Python** | 锁定编号 + 人脸绑座 + 举手竞态 |
 | 人物编号原版 | http://localhost:5173/people.html | Node.js **+ Python** | ~10FPS，Python 同步排序 |
 | **计分板（仅展示）** | http://localhost:5173/scoreboard.html | 同域其它页即可 | 大号编号；最先举手持续闪烁；答对 +1 停闪 |
 | **语音作答 · 在线识别 V2.0（推荐）** | http://localhost:5173/speech-online.html | Node.js **+ Python** · **联网** · Chrome/Edge | 实时听写 + DeepSeek 语义 + 10s 限时；通过/超时即停 |
@@ -565,7 +565,7 @@ npm.cmd run lint
 要点：
 
 - 锁定前不做举手竞态，避免号还在变就判定  
-- 锁定后编号跟 **座位槽位（位置）**，短暂丢检再出现会按原位置找回原编号（不是死绑 MediaPipe 的临时 trackId）  
+- 锁定后编号跟人脸会话模板 + 座位位置：短暂丢检再出现优先按**人脸**找回原号，位置作兜底  
 - 追踪放宽：更大匹配半径、约 3 秒丢检容忍  
 - 锁定后编号跟 track，不再每帧打排序 API  
 - API 失败时用本地左→右规则完成这一次锁定  
@@ -620,7 +620,7 @@ video_test/
 
 - **结论：** 人物编号快版已满足当前需求，标记为 **视频解析 V1.0**。  
 - **入口：** `people-fast.html` / `start-people-fast.bat`  
-- **范围：** 人数达标锁定编号、举手判定、最先举手反馈、座位槽位防丢号；不含计分 / 抢答流程。  
+- **范围：** 人数达标锁定编号、**人脸绑定座位号**、举手判定、最先举手反馈；不含计分 / 抢答流程 / 姓名底库。  
 
 以下为 V1.0 及此前已落地、换机部署时需要知道的内容：
 

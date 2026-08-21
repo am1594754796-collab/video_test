@@ -23,10 +23,25 @@ export {
   slotsFromSort,
   rebindSlotsToTracks,
   indexByTrackIdFromSlots,
+  countSlotsWithFace,
   type NumberingSlot,
   type TrackPoint,
   type RebindOptions,
 } from "./detect/numberingSlots";
+export {
+  createFaceDetector,
+  detectFacesForVideo,
+  DEFAULT_FACE_MODEL_URL,
+  type FaceBox,
+  type FaceDetectorConfig,
+} from "./detect/faceDetector";
+export {
+  extractFaceDescriptor,
+  cosineSimilarity,
+  pickFaceForPerson,
+  assignFaceDescriptorsToTracks,
+  type FaceDescriptor,
+} from "./detect/faceDescriptor";
 export {
   createPoseLandmarker,
   detectPosesForVideo,

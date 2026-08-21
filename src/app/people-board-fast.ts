@@ -1,14 +1,19 @@
 /**
  * People board (fast path):
  * 1) Wait until on-screen count matches expected (stable) → one Python L→R sort → lock indices to trackIds
- * 2) After lock: only hand-raise + first-raise feedback (no per-frame re-sort)
+ * 2) At lock: bind each seat to a session face template
+ * 3) After lock: rebind by face (preferred) then position; hand-raise + first-raise only
  */
 
-import { PoseLandmarker } from "@mediapipe/tasks-vision";
+import { FaceDetector, PoseLandmarker } from "@mediapipe/tasks-vision";
 import {
+  assignFaceDescriptorsToTracks,
+  countSlotsWithFace,
   createCountLockState,
+  createFaceDetector,
   createPoseLandmarker,
   dedupePosesByTorso,
+  detectFacesForVideo,
   detectPosesForVideo,
   FirstRaiseTracker,
   indexByTrackIdFromSlots,
@@ -22,6 +27,8 @@ import {
   unlockCountLock,
   type CameraHandle,
   type CountLockSnapshot,
+  type FaceBox,
+  type FaceDescriptor,
   type FirstRaiseEvent,
   type NumberingSlot,
   type TrackedPose,
@@ -30,11 +37,13 @@ import { POSE } from "../vision/detect/isHandRaised";
 import { publishClassroomEvent } from "./classroomBus";
 
 const DETECT_INTERVAL_MS = 50;
+const FACE_DETECT_INTERVAL_MS = 200;
 const RAISE_MARGIN = 0.05;
 /** Consecutive frames at expected count before one-shot Python sort. */
 const LOCK_STABLE_FRAMES = 8;
 /** How far (normalized) a returning person can be from their locked seat to reclaim the number. */
 const REBIND_MAX_DISTANCE = 0.35;
+const MIN_FACE_SIMILARITY = 0.82;
 /** Tracker: tolerate larger motion + longer dropouts before killing a track. */
 const TRACK_MATCH_DISTANCE = 0.28;
 const TRACK_MAX_MISSED = 60; // ~3s at 20FPS
@@ -74,8 +83,12 @@ const HEALTH_URL = "/api/health";
 
 let camera: CameraHandle | null = null;
 let landmarker: PoseLandmarker | null = null;
+let faceDetector: FaceDetector | null = null;
 let raf = 0;
 let lastTs = 0;
+let lastFaceTs = 0;
+let lastFaceByTrack = new Map<number, FaceDescriptor>();
+let lastFaceBoxes: FaceBox[] = [];
 let canvasSized = false;
 let apiOk = false;
 let tracker = new PoseTracker({
@@ -85,13 +98,46 @@ let tracker = new PoseTracker({
 });
 let race = new FirstRaiseTracker();
 let countLock: CountLockSnapshot = createCountLockState();
-/** Sticky seats after lock: index ↔ trackId + last known center. */
+/** Sticky seats after lock: index ↔ trackId + face + last known center. */
 let numberingSlots: NumberingSlot[] = [];
 let indexByTrackId = new Map<number, number>();
 let lockedPeople: SortedPerson[] = [];
 let sortInFlight = false;
 let lastUiKey = "";
 let lastWinnerKey = "";
+
+function headAnchor(t: TrackedPose): { x: number; y: number } {
+  const nose = t.landmarks[POSE.NOSE];
+  if (nose && (nose.visibility ?? 1) >= 0.35) {
+    return { x: nose.x, y: nose.y };
+  }
+  return { x: t.center.x, y: Math.max(0, t.center.y - 0.12) };
+}
+
+function refreshFaceDescriptors(tracked: TrackedPose[], nowMs: number, force = false): void {
+  if (!faceDetector) return;
+  if (!force && nowMs - lastFaceTs < FACE_DETECT_INTERVAL_MS) return;
+  lastFaceTs = nowMs;
+  lastFaceBoxes = detectFacesForVideo(faceDetector, video, nowMs);
+  lastFaceByTrack = assignFaceDescriptorsToTracks(
+    video,
+    tracked.map((t) => {
+      const h = headAnchor(t);
+      return { trackId: t.trackId, x: h.x, y: h.y };
+    }),
+    lastFaceBoxes,
+  );
+}
+
+function captureFaceTemplates(tracked: TrackedPose[]): number {
+  refreshFaceDescriptors(tracked, performance.now(), true);
+  for (const slot of numberingSlots) {
+    if (slot.trackId == null) continue;
+    const desc = lastFaceByTrack.get(slot.trackId);
+    if (desc) slot.faceDescriptor = desc;
+  }
+  return countSlotsWithFace(numberingSlots);
+}
 
 function readExpectedCount(): number {
   const n = Number(inputExpected.value);
@@ -168,8 +214,13 @@ function applyLockFromSort(sorted: SortResponse): void {
 function syncSlotsWithTracks(tracked: TrackedPose[]): void {
   numberingSlots = rebindSlotsToTracks(
     numberingSlots,
-    tracked.map((t) => ({ trackId: t.trackId, x: t.center.x, y: t.center.y })),
-    { maxDistance: REBIND_MAX_DISTANCE },
+    tracked.map((t) => ({
+      trackId: t.trackId,
+      x: t.center.x,
+      y: t.center.y,
+      faceDescriptor: lastFaceByTrack.get(t.trackId) ?? null,
+    })),
+    { maxDistance: REBIND_MAX_DISTANCE, minFaceSimilarity: MIN_FACE_SIMILARITY },
   );
   indexByTrackId = indexByTrackIdFromSlots(numberingSlots);
   lockedPeople = numberingSlots.map((s) => ({
@@ -181,7 +232,7 @@ function syncSlotsWithTracks(tracked: TrackedPose[]): void {
   }));
 }
 
-async function lockNumbering(payload: PersonPoint[]): Promise<void> {
+async function lockNumbering(payload: PersonPoint[], tracked: TrackedPose[]): Promise<void> {
   if (sortInFlight) return;
   sortInFlight = true;
   try {
@@ -189,6 +240,7 @@ async function lockNumbering(payload: PersonPoint[]): Promise<void> {
     const sorted = apiOk ? await sortViaPython(payload) : sortLocal(payload);
     if (apiOk) setApiStatus(true, "编号已锁定");
     applyLockFromSort(sorted);
+    const faceBound = captureFaceTemplates(tracked);
     race = new FirstRaiseTracker();
     lastUiKey = "";
     lastWinnerKey = "";
@@ -197,18 +249,23 @@ async function lockNumbering(payload: PersonPoint[]): Promise<void> {
       seats: sorted.people.map((p) => p.index),
       source: "people-fast",
     });
-    setStatus(`已锁定 ${sorted.count} 人编号 · 开始举手检测`);
+    setStatus(
+      `已锁定 ${sorted.count} 人编号 · 人脸绑座 ${faceBound}/${sorted.count} · 开始举手检测`,
+    );
   } catch {
     setApiStatus(false, "排序失败，已用本地锁定");
     const local = sortLocal(payload);
     applyLockFromSort(local);
+    const faceBound = captureFaceTemplates(tracked);
     race = new FirstRaiseTracker();
     publishClassroomEvent({
       type: "numbering-locked",
       seats: local.people.map((p) => p.index),
       source: "people-fast",
     });
-    setStatus(`本地锁定 ${payload.length} 人编号 · 开始举手检测`);
+    setStatus(
+      `本地锁定 ${payload.length} 人编号 · 人脸绑座 ${faceBound}/${payload.length} · 开始举手检测`,
+    );
   } finally {
     sortInFlight = false;
   }
@@ -309,6 +366,11 @@ function drawOverlay(
       ctx.font = "bold 24px Segoe UI, sans-serif";
       ctx.fillText(`#${slot.index}?`, slot.x * w - 18, slot.y * h - 16);
     }
+    for (const f of lastFaceBoxes) {
+      ctx.strokeStyle = "rgba(61, 156, 253, 0.55)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(f.xMin * w, f.yMin * h, f.width * w, f.height * h);
+    }
   }
 
   for (const t of tracked) {
@@ -345,6 +407,8 @@ function clearNumberingLock(): void {
   numberingSlots = [];
   indexByTrackId = new Map();
   lockedPeople = [];
+  lastFaceByTrack = new Map();
+  lastFaceBoxes = [];
   race = new FirstRaiseTracker();
   lastUiKey = "";
   renderWinner(null);
@@ -363,6 +427,7 @@ async function loop(nowMs: number): Promise<void> {
   const tracked = tracker.update(poses);
 
   if (countLock.locked) {
+    refreshFaceDescriptors(tracked, nowMs);
     syncSlotsWithTracks(tracked);
   }
 
@@ -393,7 +458,7 @@ async function loop(nowMs: number): Promise<void> {
 
     if (observed.shouldLock) {
       setStatus(`人数已达 ${expected} · 正在 Python 排序锁定…`);
-      await lockNumbering(payload);
+      await lockNumbering(payload, tracked);
     } else if (liveCount === expected) {
       setStatus(
         `人数 ${liveCount}/${expected} · 稳定中 ${countLock.streak}/${LOCK_STABLE_FRAMES} 帧后锁定编号`,
@@ -407,6 +472,7 @@ async function loop(nowMs: number): Promise<void> {
   // Locked: hand-raise + first-raise only (no Python sort).
   const people = peopleFromLockedTracks(tracked);
   const missing = numberingSlots.filter((s) => s.trackId == null).length;
+  const faceBound = countSlotsWithFace(numberingSlots);
   race.update(
     people.map((p) => ({ personIndex: p.index, raised: !!p.raised })),
     nowMs,
@@ -421,10 +487,10 @@ async function loop(nowMs: number): Promise<void> {
     setStatus(`最先举手：#${winner.personIndex} · 「下一轮」再赛 · 「重新编号」可重排`);
   } else if (missing > 0) {
     setStatus(
-      `编号已锁定 · 在场 ${people.length}/${lockedPeople.length}（短暂丢失会按原位置找回编号）`,
+      `编号已锁定 · 在场 ${people.length}/${lockedPeople.length} · 人脸绑座 ${faceBound} · 丢失者按人脸/位置找回`,
     );
   } else if (raisedIndexes.length === 0) {
-    setStatus(`编号已锁定 ${lockedPeople.length} 人 · 等待举手…`);
+    setStatus(`编号已锁定 ${lockedPeople.length} 人 · 人脸绑座 ${faceBound} · 等待举手…`);
   } else {
     setStatus(`举手中：${raisedIndexes.map((n) => `#${n}`).join("、")}`);
   }
@@ -432,7 +498,7 @@ async function loop(nowMs: number): Promise<void> {
 
 async function onStart(): Promise<void> {
   btnStart.disabled = true;
-  setStatus("加载 Pose 模型…");
+  setStatus("加载 Pose / Face 模型…");
   try {
     await checkHealth();
     landmarker = await createPoseLandmarker({
@@ -441,6 +507,8 @@ async function onStart(): Promise<void> {
       minPosePresenceConfidence: 0.5,
       minTrackingConfidence: 0.45,
     });
+    setStatus("加载人脸检测模型…");
+    faceDetector = await createFaceDetector();
     camera = await startCamera(video);
     tracker = new PoseTracker({
       matchDistance: TRACK_MATCH_DISTANCE,
@@ -449,11 +517,12 @@ async function onStart(): Promise<void> {
     });
     clearNumberingLock();
     lastTs = 0;
+    lastFaceTs = 0;
     canvasSized = false;
     btnStop.disabled = false;
     btnReset.disabled = false;
     btnRelock.disabled = false;
-    setStatus(`运行中 · 等待 ${readExpectedCount()} 人出镜后锁定编号`);
+    setStatus(`运行中 · 等待 ${readExpectedCount()} 人出镜后锁定编号（含人脸绑座）`);
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame((t) => void loop(t));
   } catch (err) {
@@ -462,6 +531,8 @@ async function onStart(): Promise<void> {
     btnStart.disabled = false;
     landmarker?.close();
     landmarker = null;
+    faceDetector?.close();
+    faceDetector = null;
   }
 }
 
@@ -471,6 +542,8 @@ function onStop(): void {
   camera = null;
   landmarker?.close();
   landmarker = null;
+  faceDetector?.close();
+  faceDetector = null;
   tracker.reset();
   clearNumberingLock();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
