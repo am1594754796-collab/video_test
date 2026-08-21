@@ -1,37 +1,32 @@
 """Online semantic judge for full-sentence answers (OpenAI-compatible Chat API).
 
-Configured via environment (recommended file: python/data/online.env):
+Configured via python/data/api.env (unified):
 
+  LLM_API_KEY=sk-...
+  LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+  LLM_CHAT_MODEL=qwen-plus
   SPEECH_SEMANTIC_MODE=online
-  SPEECH_LLM_API_KEY=sk-...
-  SPEECH_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-  SPEECH_LLM_MODEL=qwen-turbo
-
-Works with DashScope / DeepSeek / OpenAI and other OpenAI-compatible endpoints.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any
 
 import httpx
 
 from speech_answer.fuzzy_match import MATCH_THRESHOLD
-
-_DEFAULT_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-_DEFAULT_MODEL = "qwen-turbo"
+from speech_answer.llm_config import llm_api_key, llm_base_url, llm_chat_model
 
 _SCORE_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
 
 
 def _cfg() -> dict[str, str]:
     return {
-        "api_key": os.environ.get("SPEECH_LLM_API_KEY", "").strip(),
-        "base_url": os.environ.get("SPEECH_LLM_BASE_URL", _DEFAULT_BASE).strip().rstrip("/"),
-        "model": os.environ.get("SPEECH_LLM_MODEL", _DEFAULT_MODEL).strip(),
+        "api_key": llm_api_key(),
+        "base_url": llm_base_url(),
+        "model": llm_chat_model(),
     }
 
 

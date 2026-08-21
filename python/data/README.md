@@ -78,10 +78,44 @@
 
 **读题：** 语音页选题后点「扬声器读题」（Chrome/Edge，本机扬声器）。
 
+## 统一 API 配置（`api.env`）
+
+所有云端 Key **只放一个文件**：
+
+```
+python/data/api.env
+```
+
+从模板复制：
+
+```bat
+copy python\data\api.env.example python\data\api.env
+```
+
+编辑 `api.env`：
+
+```
+LLM_API_KEY=你的Key
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_CHAT_MODEL=qwen-plus
+LLM_VISION_MODEL=qwen-vl-plus
+SPEECH_SEMANTIC_MODE=online
+VISION_FACE_MODE=qwen
+```
+
+| 变量 | 用途 |
+|------|------|
+| `LLM_API_KEY` | 语音语义 + 千问人脸 **共用** |
+| `LLM_CHAT_MODEL` | 语音答对语义判分 |
+| `LLM_VISION_MODEL` | 人脸检测（须 `qwen-vl-*`） |
+
+`api.env` 已 gitignore，**不要提交**。改完后重启 uvicorn。
+
+旧文件 `online.env` 仍会加载（兼容），但新配置请只维护 `api.env`。
+
 ## 线上语义判分（整句）
 
-复制 `online.env.example` → `online.env`，填入 `SPEECH_LLM_API_KEY`。  
-默认走通义兼容接口，用大模型判断「学生说法是否答对标准答案」。
+见上方 `api.env` 中 `SPEECH_SEMANTIC_MODE=online` 与 `LLM_CHAT_MODEL`。
 
 ## 换机移植
 

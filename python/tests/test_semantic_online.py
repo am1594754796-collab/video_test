@@ -34,7 +34,9 @@ class _FakeClient:
 
 
 def test_online_semantic_paraphrase(monkeypatch):
-    monkeypatch.setenv("SPEECH_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("LLM_CHAT_MODEL", "qwen-plus")
     content = json.dumps({"score": 0.94, "passed": True, "reason": "同义"}, ensure_ascii=False)
     payload = {"choices": [{"message": {"content": content}}]}
     monkeypatch.setattr(httpx, "Client", lambda timeout=30.0: _FakeClient(payload))
@@ -47,5 +49,7 @@ def test_online_semantic_paraphrase(monkeypatch):
 
 
 def test_online_without_key_returns_none(monkeypatch):
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("SPEECH_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("VISION_LLM_API_KEY", raising=False)
     assert semantic_online.online_semantic_score("a", "b") is None

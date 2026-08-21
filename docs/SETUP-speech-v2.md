@@ -70,8 +70,10 @@ cd ..
 |------|------------|------------|
 | `python/data/answers.json` | 是 | 改题目 / 标准答案 |
 | `python/data/answers.path` | 是 | 一行相对路径，指向要用哪个 JSON |
-| `python/data/online.env` | **否**（gitignore） | **每台机器新建**，填 DeepSeek Key |
-| `python/data/online.env.example` | 是 | 复制模板用，勿把真 Key 写回 example |
+| `python/data/api.env` | **否**（gitignore） | **推荐**：统一 Key（语音+人脸），每台机器新建 |
+| `python/data/api.env.example` | 是 | 复制模板用，勿把真 Key 写回 example |
+| `python/data/online.env` | **否**（gitignore） | 旧配置，仍兼容；新机器请用 `api.env` |
+| `python/data/online.env.example` | 是 | 旧模板 |
 
 路径约定：相对路径一律相对 **`python/`** 目录。  
 例：`data/answers.json` → 实际文件 `python/data/answers.json`。
@@ -117,37 +119,41 @@ data/answers.json
 
 ---
 
-## 5. 配置 DeepSeek 线上语义（必做，否则整句语义为空）
+## 5. 配置统一 API（语音语义 + 千问人脸）
 
 ### 5.1 生成本地密钥文件
 
 在项目根目录：
 
-```bat
-copy python\data\online.env.example python\data\online.env
-```
+`at
+copy python\data\api.env.example python\data\api.env
+`
 
 ### 5.2 填写内容
 
-用记事本打开 `python\data\online.env`，改成：
+用记事本打开 python\data\api.env，改成：
 
-```
+`
+LLM_API_KEY=这里填你的千问或其它兼容接口密钥
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_CHAT_MODEL=qwen-plus
+LLM_VISION_MODEL=qwen-vl-plus
 SPEECH_SEMANTIC_MODE=online
-SPEECH_LLM_API_KEY=这里填你的DeepSeek密钥
-SPEECH_LLM_BASE_URL=https://api.deepseek.com
-SPEECH_LLM_MODEL=deepseek-chat
-```
+VISION_FACE_MODE=qwen
+`
 
 说明：
 
-- `SPEECH_LLM_API_KEY`：DeepSeek 控制台复制的 `sk-...`
-- 不要把填好 Key 的 `online.env` 提交到 Git
+- LLM_API_KEY：语音与人脸 **共用** 一把 Key
+- LLM_VISION_MODEL 须为多模态（qwen-vl-plus 等）
+- 不要把填好 Key 的 pi.env 提交到 Git
 - 换机后必须重新创建并填写（不会随仓库带走）
+- 旧文件 online.env 仍兼容，新配置请只用 pi.env
 
 ### 5.3 生效方式
 
-保存后 **重启** uvicorn（或重新运行 `start-speech-online.bat`）。  
-`server.py` 启动时会自动加载 `python/data/online.env`。
+保存后 **重启** uvicorn（或重新运行启动脚本）。
+server.py 启动时会自动加载 python/data/api.env（以及旧的 online.env）。
 
 ---
 

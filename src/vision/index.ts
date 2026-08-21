@@ -29,11 +29,7 @@ export {
   type RebindOptions,
 } from "./detect/numberingSlots";
 export {
-  createFaceDetector,
-  detectFacesForVideo,
-  DEFAULT_FACE_MODEL_URL,
   type FaceBox,
-  type FaceDetectorConfig,
 } from "./detect/faceDetector";
 export {
   extractFaceDescriptor,

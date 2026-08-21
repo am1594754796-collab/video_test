@@ -137,7 +137,7 @@
 |--------|----------|
 | 人体姿态 / 举手 | MediaPipe Pose Landmarker（浏览器） |
 | 左→右编号 | 躯干 x 排序；Python FastAPI 排序 API；快版锁定一次 |
-| 编号防丢 | 锁定时会话人脸模板绑座位；重绑优先人脸相似度，其次位置 |
+| 编号防丢 | 锁定时用**千问 VL**检人脸并建会话模板；重绑优先人脸相似度，其次位置 |
 | 谁先举手 | 连续帧防抖 + FirstRaise 上升沿竞态 |
 | 离线语音 | faster-whisper + rapidfuzz |
 | 在线语音 | Web Speech + pypinyin + DeepSeek 语义 |

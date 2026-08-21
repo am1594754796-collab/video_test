@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+import httpx
 
 from sort_people import sort_people_left_to_right
 from speech_answer.answer_bank import AnswerBank, UnknownQuestionIdError
@@ -32,8 +33,11 @@ from speech_answer.paths import (
     to_relative_display,
     write_configured_relative_path,
 )
+from vision_face import detect_faces_qwen, vision_face_configured, vision_face_status
+from speech_answer.llm_config import llm_status
 
-# Load online semantic config if present (python/data/online.env)
+# Load unified API config first, then legacy online.env if present
+load_env_file(PYTHON_ROOT / "data" / "api.env", override=False)
 load_env_file(PYTHON_ROOT / "data" / "online.env", override=False)
 
 app = FastAPI(title="Classroom Vision + Speech API", version="0.2.0")
@@ -132,9 +136,56 @@ class SetBankRequest(BaseModel):
     )
 
 
+class DetectFacesRequest(BaseModel):
+    """JPEG/PNG base64 (raw or data-URL) for Qwen-VL face detection."""
+
+    image_base64: str = Field(..., min_length=8)
+    max_faces: int = Field(default=6, ge=1, le=8)
+    mime: str = Field(default="image/jpeg")
+
+
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    face = vision_face_status()
+    llm = llm_status()
+    return {
+        "status": "ok",
+        "llm_configured": llm["configured"],
+        "llm_base_url": llm.get("base_url"),
+        "llm_chat_model": llm.get("chat_model"),
+        "llm_vision_model": llm.get("vision_model"),
+        "vision_face_mode": face["mode"],
+        "vision_face_configured": face["configured"],
+        "vision_face_model": face.get("model"),
+    }
+
+
+@app.get("/api/vision/face-status")
+def vision_face_status_api() -> dict[str, Any]:
+    return vision_face_status()
+
+
+@app.post("/api/vision/detect-faces")
+def vision_detect_faces(body: DetectFacesRequest) -> dict[str, Any]:
+    if not vision_face_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="千问人脸未配置：请在 python/data/api.env 设置 LLM_API_KEY（及 VISION_FACE_MODE=qwen）",
+        )
+    try:
+        faces = detect_faces_qwen(
+            body.image_base64,
+            max_faces=body.max_faces,
+            mime=body.mime,
+        )
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Qwen API HTTP {exc.response.status_code}: {exc.response.text[:300]}",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"face detect failed: {exc}") from exc
+    return {"count": len(faces), "faces": faces}
 
 
 @app.post("/api/people/sort")

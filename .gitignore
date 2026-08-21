@@ -10,3 +10,5 @@ python/.pytest_cache/
 .vite/
 python/data/online.env
 **/online.env
+python/data/api.env
+**/api.env

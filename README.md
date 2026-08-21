@@ -58,8 +58,9 @@ cd ..
 - 须用 **`http://localhost:5173`**（非 `file://`），否则无摄像头权限  
 - Windows：设置 → 隐私 → 相机 → 允许浏览器使用  
 - 页顶须显示 **Python API: 已连接**（排序依赖 `8765`）  
+- **人脸绑座（千问）：** 统一配置 `python/data/api.env`（`LLM_API_KEY` + `LLM_VISION_MODEL=qwen-vl-plus`），改完重启 uvicorn。模板：`api.env.example`  
 - 默认期望人数可在页内修改（调试常用 2；教室可改 1–6）  
-- 短暂丢检会按座位位置尽量找回原号；大挪位请点「重新编号」
+- 短暂丢检会按人脸模板/座位位置尽量找回原号；大挪位请点「重新编号」
 
 ---
 

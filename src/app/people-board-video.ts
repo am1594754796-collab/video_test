@@ -3,15 +3,13 @@
  * Same lock / face-seat / raise logic as people-fast, but source is a local video file.
  */
 
-import { FaceDetector, PoseLandmarker } from "@mediapipe/tasks-vision";
+import { PoseLandmarker } from "@mediapipe/tasks-vision";
 import {
   assignFaceDescriptorsToTracks,
   countSlotsWithFace,
   createCountLockState,
-  createFaceDetector,
   createPoseLandmarker,
   dedupePosesByTorso,
-  detectFacesForVideo,
   detectPosesForVideo,
   FirstRaiseTracker,
   indexByTrackIdFromSlots,
@@ -31,9 +29,10 @@ import {
 } from "../vision";
 import { POSE } from "../vision/detect/isHandRaised";
 import { publishClassroomEvent } from "./classroomBus";
+import { detectFacesViaQwen, fetchQwenFaceStatus } from "./qwenFaceDetect";
 
 const DETECT_INTERVAL_MS = 50;
-const FACE_DETECT_INTERVAL_MS = 200;
+const FACE_DETECT_INTERVAL_MS = 2500;
 const RAISE_MARGIN = 0.05;
 const LOCK_STABLE_FRAMES = 8;
 const REBIND_MAX_DISTANCE = 0.35;
@@ -83,7 +82,8 @@ const HEALTH_URL = "/api/health";
 let objectUrl: string | null = null;
 let detecting = false;
 let landmarker: PoseLandmarker | null = null;
-let faceDetector: FaceDetector | null = null;
+let qwenFaceOk = false;
+let faceInFlight = false;
 let raf = 0;
 let lastTs = 0;
 let lastFaceTs = 0;
@@ -115,22 +115,48 @@ function headAnchor(t: TrackedPose): { x: number; y: number } {
 }
 
 function refreshFaceDescriptors(tracked: TrackedPose[], nowMs: number, force = false): void {
-  if (!faceDetector) return;
+  if (!qwenFaceOk) return;
+  if (faceInFlight) return;
   if (!force && nowMs - lastFaceTs < FACE_DETECT_INTERVAL_MS) return;
+  faceInFlight = true;
   lastFaceTs = nowMs;
-  lastFaceBoxes = detectFacesForVideo(faceDetector, video, nowMs);
-  lastFaceByTrack = assignFaceDescriptorsToTracks(
-    video,
-    tracked.map((t) => {
-      const h = headAnchor(t);
-      return { trackId: t.trackId, x: h.x, y: h.y };
-    }),
-    lastFaceBoxes,
-  );
+  void detectFacesViaQwen(video)
+    .then((faces) => {
+      lastFaceBoxes = faces;
+      lastFaceByTrack = assignFaceDescriptorsToTracks(
+        video,
+        tracked.map((t) => {
+          const h = headAnchor(t);
+          return { trackId: t.trackId, x: h.x, y: h.y };
+        }),
+        faces,
+      );
+    })
+    .catch((err) => {
+      console.warn("[face/qwen]", err);
+    })
+    .finally(() => {
+      faceInFlight = false;
+    });
 }
 
-function captureFaceTemplates(tracked: TrackedPose[]): number {
-  refreshFaceDescriptors(tracked, performance.now(), true);
+async function captureFaceTemplates(tracked: TrackedPose[]): Promise<number> {
+  if (!qwenFaceOk) return 0;
+  try {
+    lastFaceBoxes = await detectFacesViaQwen(video);
+    lastFaceByTrack = assignFaceDescriptorsToTracks(
+      video,
+      tracked.map((t) => {
+        const h = headAnchor(t);
+        return { trackId: t.trackId, x: h.x, y: h.y };
+      }),
+      lastFaceBoxes,
+    );
+    lastFaceTs = performance.now();
+  } catch (err) {
+    console.warn("[face/qwen] lock capture failed", err);
+    return countSlotsWithFace(numberingSlots);
+  }
   for (const slot of numberingSlots) {
     if (slot.trackId == null) continue;
     const desc = lastFaceByTrack.get(slot.trackId);
@@ -240,7 +266,7 @@ async function lockNumbering(payload: PersonPoint[], tracked: TrackedPose[]): Pr
     const sorted = apiOk ? await sortViaPython(payload) : sortLocal(payload);
     if (apiOk) setApiStatus(true, "编号已锁定");
     applyLockFromSort(sorted);
-    const faceBound = captureFaceTemplates(tracked);
+    const faceBound = await captureFaceTemplates(tracked);
     race = new FirstRaiseTracker();
     lastUiKey = "";
     lastWinnerKey = "";
@@ -250,13 +276,13 @@ async function lockNumbering(payload: PersonPoint[], tracked: TrackedPose[]): Pr
       source: BUS_SOURCE,
     });
     setStatus(
-      `已锁定 ${sorted.count} 人编号 · 人脸绑座 ${faceBound}/${sorted.count} · 开始举手检测`,
+      `已锁定 ${sorted.count} 人编号 · 千问人脸绑座 ${faceBound}/${sorted.count} · 开始举手检测`,
     );
   } catch {
     setApiStatus(false, "排序失败，已用本地锁定");
     const local = sortLocal(payload);
     applyLockFromSort(local);
-    const faceBound = captureFaceTemplates(tracked);
+    const faceBound = await captureFaceTemplates(tracked);
     race = new FirstRaiseTracker();
     publishClassroomEvent({
       type: "numbering-locked",
@@ -264,7 +290,7 @@ async function lockNumbering(payload: PersonPoint[], tracked: TrackedPose[]): Pr
       source: BUS_SOURCE,
     });
     setStatus(
-      `本地锁定 ${payload.length} 人编号 · 人脸绑座 ${faceBound}/${payload.length} · 开始举手检测`,
+      `本地锁定 ${payload.length} 人编号 · 千问人脸绑座 ${faceBound}/${payload.length} · 开始举手检测`,
     );
   } finally {
     sortInFlight = false;
@@ -544,7 +570,7 @@ async function onStart(): Promise<void> {
     return;
   }
   btnStart.disabled = true;
-  setStatus("加载 Pose / Face 模型…");
+  setStatus("加载 Pose 模型…");
   try {
     await checkHealth();
     landmarker = await createPoseLandmarker({
@@ -553,8 +579,17 @@ async function onStart(): Promise<void> {
       minPosePresenceConfidence: 0.5,
       minTrackingConfidence: 0.45,
     });
-    setStatus("加载人脸检测模型…");
-    faceDetector = await createFaceDetector();
+    try {
+      const faceSt = await fetchQwenFaceStatus();
+      qwenFaceOk = !!faceSt.configured;
+      if (qwenFaceOk) {
+        setApiStatus(true, `千问人脸 · ${faceSt.model ?? "qwen-vl"}`);
+      } else {
+        setApiStatus(apiOk, "千问人脸未配置 · 仅位置绑座");
+      }
+    } catch {
+      qwenFaceOk = false;
+    }
     tracker = new PoseTracker({
       matchDistance: TRACK_MATCH_DISTANCE,
       maxMissed: TRACK_MAX_MISSED,
@@ -571,7 +606,11 @@ async function onStart(): Promise<void> {
     btnRelock.disabled = false;
     await video.play();
     btnPause.textContent = "暂停视频";
-    setStatus(`检测中 · 等待 ${readExpectedCount()} 人出镜后锁定编号（含人脸绑座）`);
+    setStatus(
+      qwenFaceOk
+        ? `检测中 · 等待 ${readExpectedCount()} 人（千问人脸绑座）`
+        : `检测中 · 等待 ${readExpectedCount()} 人 · 未配置千问，仅位置绑座`,
+    );
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame((t) => void loop(t));
   } catch (err) {
@@ -581,8 +620,6 @@ async function onStart(): Promise<void> {
     btnStart.disabled = false;
     landmarker?.close();
     landmarker = null;
-    faceDetector?.close();
-    faceDetector = null;
   }
 }
 
@@ -593,8 +630,7 @@ function stopDetection(opts?: { keepFile?: boolean }): void {
   video.pause();
   landmarker?.close();
   landmarker = null;
-  faceDetector?.close();
-  faceDetector = null;
+  qwenFaceOk = false;
   tracker.reset();
   clearNumberingLock();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
