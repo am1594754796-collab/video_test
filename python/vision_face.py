@@ -22,8 +22,18 @@ from speech_answer.llm_config import llm_api_key, llm_base_url, llm_vision_model
 _JSON_RE = re.compile(r"\{[\s\S]*\}")
 
 
+def _provider_name() -> str:
+    """VISION_FACE_PROVIDER preferred; legacy VISION_FACE_MODE still works."""
+    raw = (
+        os.environ.get("VISION_FACE_PROVIDER", "").strip()
+        or os.environ.get("VISION_FACE_MODE", "").strip()
+        or "qwen"
+    )
+    return raw.lower()
+
+
 def _cfg() -> dict[str, str]:
-    mode = os.environ.get("VISION_FACE_MODE", "qwen").strip().lower() or "qwen"
+    mode = _provider_name()
     return {
         "api_key": llm_api_key(),
         "base_url": llm_base_url(),
@@ -34,13 +44,17 @@ def _cfg() -> dict[str, str]:
 
 def vision_face_configured() -> bool:
     cfg = _cfg()
-    return cfg["mode"] == "qwen" and bool(cfg["api_key"])
+    if cfg["mode"] in ("off", "none", "disabled"):
+        return False
+    # Any active provider name still needs a key (qwen / future openai, etc.)
+    return bool(cfg["api_key"]) and cfg["mode"] not in ("",)
 
 
 def vision_face_status() -> dict[str, Any]:
     cfg = _cfg()
     return {
         "mode": cfg["mode"],
+        "provider": cfg["mode"],
         "configured": vision_face_configured(),
         "model": cfg["model"] if cfg["api_key"] else None,
         "base_url": cfg["base_url"] if cfg["api_key"] else None,
@@ -137,8 +151,6 @@ def detect_faces_qwen(
     cfg = _cfg()
     if not cfg["api_key"]:
         raise RuntimeError("LLM_API_KEY not configured in python/data/api.env")
-    if cfg["mode"] != "qwen":
-        raise RuntimeError(f"VISION_FACE_MODE={cfg['mode']} (expected qwen)")
 
     b64 = image_base64.strip()
     if b64.startswith("data:"):

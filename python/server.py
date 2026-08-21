@@ -33,8 +33,9 @@ from speech_answer.paths import (
     to_relative_display,
     write_configured_relative_path,
 )
-from vision_face import detect_faces_qwen, vision_face_configured, vision_face_status
+from providers.face.factory import get_face_detector, face_provider_status
 from speech_answer.llm_config import llm_status
+from providers.semantic.factory import semantic_provider_status
 
 # Load unified API config first, then legacy online.env if present
 load_env_file(PYTHON_ROOT / "data" / "api.env", override=False)
@@ -146,34 +147,41 @@ class DetectFacesRequest(BaseModel):
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    face = vision_face_status()
+    face = face_provider_status()
     llm = llm_status()
+    sem = semantic_provider_status()
     return {
         "status": "ok",
         "llm_configured": llm["configured"],
         "llm_base_url": llm.get("base_url"),
         "llm_chat_model": llm.get("chat_model"),
         "llm_vision_model": llm.get("vision_model"),
-        "vision_face_mode": face["mode"],
+        "vision_face_mode": face.get("provider") or face.get("requested"),
+        "vision_face_provider": face.get("provider"),
         "vision_face_configured": face["configured"],
         "vision_face_model": face.get("model"),
+        "speech_semantic_provider": sem.get("provider"),
+        "speech_semantic_configured": sem.get("configured"),
     }
 
 
 @app.get("/api/vision/face-status")
 def vision_face_status_api() -> dict[str, Any]:
-    return vision_face_status()
+    return face_provider_status()
 
 
 @app.post("/api/vision/detect-faces")
 def vision_detect_faces(body: DetectFacesRequest) -> dict[str, Any]:
-    if not vision_face_configured():
+    detector = get_face_detector()
+    if not detector.configured():
         raise HTTPException(
             status_code=503,
-            detail="千问人脸未配置：请在 python/data/api.env 设置 LLM_API_KEY（及 VISION_FACE_MODE=qwen）",
+            detail=(
+                "人脸未配置：请在 python/data/api.env 填写 LLM_API_KEY（见 deploy/README.md）"
+            ),
         )
     try:
-        faces = detect_faces_qwen(
+        faces = detector.detect(
             body.image_base64,
             max_faces=body.max_faces,
             mime=body.mime,
@@ -181,11 +189,11 @@ def vision_detect_faces(body: DetectFacesRequest) -> dict[str, Any]:
     except httpx.HTTPStatusError as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"Qwen API HTTP {exc.response.status_code}: {exc.response.text[:300]}",
+            detail=f"Face API HTTP {exc.response.status_code}: {exc.response.text[:300]}",
         ) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"face detect failed: {exc}") from exc
-    return {"count": len(faces), "faces": faces}
+    return {"count": len(faces), "faces": faces, "provider": getattr(detector, "name", None)}
 
 
 @app.post("/api/people/sort")

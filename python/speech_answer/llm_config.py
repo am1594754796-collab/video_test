@@ -3,13 +3,11 @@
 Primary file: python/data/api.env  (gitignored)
 Legacy file:  python/data/online.env (still loaded if present)
 
-Shared keys:
-  LLM_API_KEY          — one key for chat + vision
-  LLM_BASE_URL         — OpenAI-compatible base (DashScope / DeepSeek / …)
-  LLM_CHAT_MODEL       — text model for speech semantic match
-  LLM_VISION_MODEL     — multimodal model for face detect (qwen-vl-*)
+Operator-facing (api.env): only LLM_API_KEY.
+Built-in classroom stack: DashScope + qwen-plus (chat) + qwen-vl-plus (vision).
 
-Aliases still work: SPEECH_LLM_* / VISION_LLM_*
+Env overrides (developers / tests only): LLM_BASE_URL, LLM_CHAT_MODEL,
+LLM_VISION_MODEL, plus aliases SPEECH_LLM_* / VISION_LLM_*.
 """
 
 from __future__ import annotations

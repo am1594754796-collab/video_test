@@ -15,7 +15,9 @@
 
 仓库：https://github.com/am1594754796-collab/video_test
 
-**换机配置语音 V2.0：** 见 [`docs/SETUP-speech-v2.md`](docs/SETUP-speech-v2.md)
+**换机 / 移植（推荐入口）：** [`deploy/README.md`](deploy/README.md)  
+**API 可插拔（换厂商）：** [`docs/API-PROVIDERS.md`](docs/API-PROVIDERS.md)  
+**语音 V2.0 细则：** [`docs/SETUP-speech-v2.md`](docs/SETUP-speech-v2.md)
 
 ---
 
@@ -58,7 +60,7 @@ cd ..
 - 须用 **`http://localhost:5173`**（非 `file://`），否则无摄像头权限  
 - Windows：设置 → 隐私 → 相机 → 允许浏览器使用  
 - 页顶须显示 **Python API: 已连接**（排序依赖 `8765`）  
-- **人脸绑座（千问）：** 统一配置 `python/data/api.env`（`LLM_API_KEY` + `LLM_VISION_MODEL=qwen-vl-plus`），改完重启 uvicorn。模板：`api.env.example`  
+- **人脸绑座（千问）：** 统一配置 `python/data/api.env`（从 `deploy/api.env.example` 复制），**只填** `LLM_API_KEY`；改完重启。换厂商见 [`docs/API-PROVIDERS.md`](docs/API-PROVIDERS.md)  
 - 默认期望人数可在页内修改（调试常用 2；教室可改 1–6）  
 - 短暂丢检会按人脸模板/座位位置尽量找回原号；大挪位请点「重新编号」
 
@@ -77,8 +79,8 @@ cd ..
 
 **注意：**
 
-- 须先配置 `python/data/online.env`（从 `online.env.example` 复制），填入 DeepSeek Key；改完**重启** uvicorn。详见 [`docs/SETUP-speech-v2.md`](docs/SETUP-speech-v2.md)  
-- `online.env` **不要提交 Git**  
+- 须先配置 **`python/data/api.env`**（`copy deploy\api.env.example python\data\api.env`），**只填** `LLM_API_KEY`；改完**重启** uvicorn。见 [`deploy/README.md`](deploy/README.md)  
+- `api.env` / 旧 `online.env` **不要提交 Git**  
 - 答案库默认 `python/data/answers.json`（由 `answers.path` 指向）；选择题请写 `prompt` + `options` A–D  
 - 匹配 ≥ **90%** 判对（字形 / 拼音 / 语义取最高）；读题**不会**念出 `answer`  
 - 非 Chrome/Edge 或无网时，在线听写与语义可能不可用；读题需本机扬声器与中文语音包  
@@ -155,14 +157,16 @@ npm.cmd run dev
 
 | 项 | 路径 |
 |----|------|
-| **移植配置手册（换机必看）** | **`docs/SETUP-speech-v2.md`** |
+| **换机入口（必看）** | **`deploy/README.md`** + **`deploy/checklist.md`** |
+| 统一 API 模板 | `deploy/api.env.example` → 复制为 `python/data/api.env` |
+| Provider 扩展说明 | **`docs/API-PROVIDERS.md`** |
+| 语音 V2.0 细则 | `docs/SETUP-speech-v2.md` |
 | 正式答案库 | `python/data/answers.json` |
 | 当前指向 | `python/data/answers.path`（相对 `python/`） |
-| 线上语义配置（含 Key，**不进 Git**） | `python/data/online.env` |
-| 配置模板 | `python/data/online.env.example` |
+| 本机密钥（**不进 Git**） | `python/data/api.env`（旧 `online.env` 仍兼容） |
 | 说明 | `python/data/README.md` · 规格 `docs/SPEC-speech-answer.md` |
 
-详细逐步配置（依赖 / 答案库 / DeepSeek / 启动验收）见：**[docs/SETUP-speech-v2.md](docs/SETUP-speech-v2.md)**。
+详细逐步配置见：**[deploy/README.md](deploy/README.md)** · **[docs/SETUP-speech-v2.md](docs/SETUP-speech-v2.md)**。
 
 ### 如何配置到当前 V2.0 效果（摘要）
 
@@ -207,20 +211,19 @@ data/answers.json
 
 网页上方也可改相对路径后点「加载答案库」。
 
-#### 3. DeepSeek 线上语义（整句解释）
+#### 3. 线上语义（整句解释）
 
 ```bat
-copy python\data\online.env.example python\data\online.env
+copy deploy\api.env.example python\data\api.env
 ```
 
-编辑 `python\data\online.env`（此文件已 gitignore，勿提交）：
+编辑 `python\data\api.env`（已 gitignore，勿提交），**只填**：
 
 ```
-SPEECH_SEMANTIC_MODE=online
-SPEECH_LLM_API_KEY=你的DeepSeek密钥
-SPEECH_LLM_BASE_URL=https://api.deepseek.com
-SPEECH_LLM_MODEL=deepseek-chat
+LLM_API_KEY=你的密钥
 ```
+
+模型已内置为千问（`qwen-plus` / `qwen-vl-plus`）。开发者换厂商见 `docs/API-PROVIDERS.md`。
 
 保存后 **重启** uvicorn。匹配分会显示「字形 · 拼音 · 语义」；总分 = 三者最大，≥90% 判对。
 
@@ -397,7 +400,7 @@ start-speech-online.bat
 
 该脚本会启动 Python API + Vite，并打开 http://localhost:5173/speech-online.html  
 
-要求：**联网**、**Chrome / Edge**；先配置 `python\data\online.env`（见上方 V2.0）。  
+要求：**联网**、**Chrome / Edge**；先配置 `python\data\api.env`（见 [`deploy/README.md`](deploy/README.md)）。  
 操作：选题 → 按下开始识别 → **10s 内**边说边匹配 → **通过或超时均自动结束**。
 
 **语音作答 · 离线 Whisper（对照）：**

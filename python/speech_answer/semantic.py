@@ -105,27 +105,30 @@ def get_semantic_scorer() -> SemanticScorer:
 
 
 def semantic_score(transcript: str, expected: str) -> float | None:
-    """Return semantic similarity in [0,1], or None if unavailable."""
+    """Return semantic similarity in [0,1], or None if unavailable.
+
+    Cloud path goes through ``providers.semantic`` (SPEECH_SEMANTIC_PROVIDER).
+    Local embedding remains here for ``offline`` / ``auto`` fallback.
+    """
     if not _env_semantic_enabled():
         return None
 
-    mode = _mode()
-    if mode in {"off", "0", "false", "no"}:
+    from providers.semantic.factory import get_semantic_judge, semantic_provider_name
+
+    name = semantic_provider_name()
+    if name in {"off", "0", "false", "no"}:
         return None
 
-    if mode == "online":
-        from speech_answer.semantic_online import online_semantic_score
+    if name in {"online", "qwen", "openai", "compatible"}:
+        return get_semantic_judge().score(transcript, expected)
 
-        return online_semantic_score(transcript, expected)
-
-    if mode == "offline":
+    if name == "offline" or _mode() == "offline":
         return get_semantic_scorer().score(transcript, expected)
 
-    # auto: prefer online when key present
-    from speech_answer.semantic_online import online_configured, online_semantic_score
-
-    if online_configured():
-        online = online_semantic_score(transcript, expected)
+    # auto: prefer online provider when key present, else local embedding
+    judge = get_semantic_judge()
+    if judge.configured():
+        online = judge.score(transcript, expected)
         if online is not None:
             return online
     return get_semantic_scorer().score(transcript, expected)

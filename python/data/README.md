@@ -92,22 +92,13 @@ python/data/api.env
 copy python\data\api.env.example python\data\api.env
 ```
 
-编辑 `api.env`：
+编辑 `api.env`，**只填 Key**（模型已内置）：
 
 ```
 LLM_API_KEY=你的Key
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_CHAT_MODEL=qwen-plus
-LLM_VISION_MODEL=qwen-vl-plus
-SPEECH_SEMANTIC_MODE=online
-VISION_FACE_MODE=qwen
 ```
 
-| 变量 | 用途 |
-|------|------|
-| `LLM_API_KEY` | 语音语义 + 千问人脸 **共用** |
-| `LLM_CHAT_MODEL` | 语音答对语义判分 |
-| `LLM_VISION_MODEL` | 人脸检测（须 `qwen-vl-*`） |
+`LLM_API_KEY`：语音语义 + 千问人脸 **共用**。地址 / 模型不要改。
 
 `api.env` 已 gitignore，**不要提交**。改完后重启 uvicorn。
 
@@ -115,7 +106,7 @@ VISION_FACE_MODE=qwen
 
 ## 线上语义判分（整句）
 
-见上方 `api.env` 中 `SPEECH_SEMANTIC_MODE=online` 与 `LLM_CHAT_MODEL`。
+默认走线上千问语义（`qwen-plus`），与人脸共用 `LLM_API_KEY`。
 
 ## 换机移植
 

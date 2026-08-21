@@ -1,7 +1,10 @@
 # 语音识别 V2.0 · 移植配置手册
 
+> **换机总入口（含人脸 + 语义统一 `api.env`）：** [`deploy/README.md`](../deploy/README.md)  
+> **换 API 厂商：** [`API-PROVIDERS.md`](./API-PROVIDERS.md)
+
 > 目标：换机 `git clone` 后，按本文配置，复现当前能力：  
-> **Web Speech 实时听写 + 答案库相对路径 + DeepSeek 整句语义 + ≥90% 匹配 + 10s 限时（通过/超时即停）**。  
+> **Web Speech 实时听写 + 答案库相对路径 + 线上语义 + ≥90% 匹配 + 10s 限时（通过/超时即停）**。  
 > 页面：http://localhost:5173/speech-online.html  
 > 一键脚本：`start-speech-online.bat`
 
@@ -131,24 +134,19 @@ copy python\data\api.env.example python\data\api.env
 
 ### 5.2 填写内容
 
-用记事本打开 python\data\api.env，改成：
+用记事本打开 python\data\api.env，**只填 Key**：
 
-`
-LLM_API_KEY=这里填你的千问或其它兼容接口密钥
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_CHAT_MODEL=qwen-plus
-LLM_VISION_MODEL=qwen-vl-plus
-SPEECH_SEMANTIC_MODE=online
-VISION_FACE_MODE=qwen
-`
+```
+LLM_API_KEY=这里填你的阿里云 DashScope（千问）密钥
+```
 
 说明：
 
 - LLM_API_KEY：语音与人脸 **共用** 一把 Key
-- LLM_VISION_MODEL 须为多模态（qwen-vl-plus 等）
-- 不要把填好 Key 的 pi.env 提交到 Git
+- 地址、模型、开关已内置，不要改
+- 不要把填好 Key 的 api.env 提交到 Git
 - 换机后必须重新创建并填写（不会随仓库带走）
-- 旧文件 online.env 仍兼容，新配置请只用 pi.env
+- 旧文件 online.env 仍兼容，新配置请只用 api.env
 
 ### 5.3 生效方式
 
