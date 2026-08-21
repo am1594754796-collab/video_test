@@ -20,7 +20,7 @@ import {
 } from "../vision";
 import { POSE } from "../vision/detect/isHandRaised";
 
-const RAISE_MARGIN = 0.08;
+const RAISE_MARGIN = 0.05;
 
 type SortedPerson = {
   index: number;

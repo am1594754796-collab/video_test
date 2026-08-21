@@ -536,7 +536,7 @@ npm.cmd run lint
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `margin` | `0.08` | 腕相对肩的高度边距（越大越不易误报） |
+| `margin` | `0.05` | 腕相对肘的高度边距（越大越不易误报；不必过肩） |
 | `minFrames` | `5` | 连续帧一致才翻转举手状态 |
 
 ### 人物编号快版（推荐 · `/people-fast.html`）· **视频解析 V1.0**
@@ -627,7 +627,7 @@ video_test/
 1. **举手检测（MediaPipe Pose）**  
    - 浏览器 `@mediapipe/tasks-vision`  
    - 单人调试默认 `numPoses=1`，减轻一人双框 / 频闪  
-   - 举手规则：腕高于肩 + 连续帧防抖  
+   - 举手规则：腕高于肘 + 连续帧防抖（不必过肩）  
 
 2. **人物数量 + 左→右编号 + 最先举手**  
    - 原版：`people.html` + `src/app/people-board.ts`（约 10FPS，同步等 Python）  

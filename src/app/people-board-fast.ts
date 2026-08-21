@@ -30,7 +30,7 @@ import { POSE } from "../vision/detect/isHandRaised";
 import { publishClassroomEvent } from "./classroomBus";
 
 const DETECT_INTERVAL_MS = 50;
-const RAISE_MARGIN = 0.08;
+const RAISE_MARGIN = 0.05;
 /** Consecutive frames at expected count before one-shot Python sort. */
 const LOCK_STABLE_FRAMES = 8;
 /** How far (normalized) a returning person can be from their locked seat to reclaim the number. */
