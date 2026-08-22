@@ -22,6 +22,7 @@ export {
 export {
   slotsFromSort,
   rebindSlotsToTracks,
+  shouldRefreshCloudFaces,
   indexByTrackIdFromSlots,
   countSlotsWithFace,
   type NumberingSlot,

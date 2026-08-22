@@ -17,6 +17,7 @@ import {
   observePersonCount,
   PoseTracker,
   rebindSlotsToTracks,
+  shouldRefreshCloudFaces,
   slotsFromSort,
   torsoCenter,
   unlockCountLock,
@@ -32,7 +33,7 @@ import { publishClassroomEvent } from "./classroomBus";
 import { detectFacesViaQwen, fetchQwenFaceStatus } from "./qwenFaceDetect";
 
 const DETECT_INTERVAL_MS = 50;
-const FACE_DETECT_INTERVAL_MS = 2500;
+const FACE_DETECT_INTERVAL_MS = 1000;
 const RAISE_MARGIN = 0.05;
 const LOCK_STABLE_FRAMES = 8;
 const REBIND_MAX_DISTANCE = 0.35;
@@ -116,8 +117,20 @@ function headAnchor(t: TrackedPose): { x: number; y: number } {
 
 function refreshFaceDescriptors(tracked: TrackedPose[], nowMs: number, force = false): void {
   if (!qwenFaceOk) return;
-  if (faceInFlight) return;
-  if (!force && nowMs - lastFaceTs < FACE_DETECT_INTERVAL_MS) return;
+  const missingSeat = numberingSlots.some((s) => s.trackId == null);
+  if (
+    !shouldRefreshCloudFaces({
+      force,
+      missingSeat,
+      nowMs,
+      lastFaceTs,
+      minIntervalMs: FACE_DETECT_INTERVAL_MS,
+      inFlight: faceInFlight,
+    })
+  ) {
+    if (!missingSeat) lastFaceBoxes = [];
+    return;
+  }
   faceInFlight = true;
   lastFaceTs = nowMs;
   void detectFacesViaQwen(video)

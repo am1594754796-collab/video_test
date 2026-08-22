@@ -28,6 +28,24 @@ export type RebindOptions = {
   minFaceSimilarity?: number;
 };
 
+export type CloudFaceRefreshGate = {
+  force?: boolean;
+  /** True when at least one locked seat currently has no live track. */
+  missingSeat: boolean;
+  nowMs: number;
+  lastFaceTs: number;
+  minIntervalMs: number;
+  inFlight: boolean;
+};
+
+/** Qwen face boxes: lock-time force, or at most once per interval while a seat is missing. */
+export function shouldRefreshCloudFaces(gate: CloudFaceRefreshGate): boolean {
+  if (gate.inFlight) return false;
+  if (gate.force) return true;
+  if (!gate.missingSeat) return false;
+  return gate.nowMs - gate.lastFaceTs >= gate.minIntervalMs;
+}
+
 function dist(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }

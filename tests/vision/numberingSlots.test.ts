@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   indexByTrackIdFromSlots,
   rebindSlotsToTracks,
+  shouldRefreshCloudFaces,
   slotsFromSort,
 } from "../../src/vision/detect/numberingSlots";
 
@@ -89,5 +90,51 @@ describe("numberingSlots", () => {
     );
     expect(next.find((s) => s.index === 1)?.trackId).toBe(99);
     expect(next.find((s) => s.index === 2)?.trackId).toBe(20);
+  });
+
+  it("keeps seat index and face template while the person is missing", () => {
+    const faceA = Array.from({ length: 8 }, (_, i) => (i === 0 ? 1 : 0));
+    const slots = [
+      {
+        index: 3,
+        trackId: 10 as number | null,
+        x: 0.4,
+        y: 0.4,
+        faceDescriptor: faceA,
+      },
+    ];
+    const orphaned = rebindSlotsToTracks(slots, []);
+    expect(orphaned[0].index).toBe(3);
+    expect(orphaned[0].trackId).toBeNull();
+    expect(orphaned[0].faceDescriptor).toEqual(faceA);
+
+    const back = rebindSlotsToTracks(orphaned, [
+      { trackId: 77, x: 0.41, y: 0.4, faceDescriptor: faceA },
+    ]);
+    expect(back[0].index).toBe(3);
+    expect(back[0].trackId).toBe(77);
+  });
+
+  it("gates cloud face refresh: missing seats only, 1s throttle, skip in-flight", () => {
+    const base = {
+      missingSeat: true,
+      nowMs: 2000,
+      lastFaceTs: 500,
+      minIntervalMs: 1000,
+      inFlight: false,
+    };
+    expect(shouldRefreshCloudFaces({ ...base, missingSeat: false })).toBe(false);
+    expect(shouldRefreshCloudFaces({ ...base, nowMs: 1400 })).toBe(false);
+    expect(shouldRefreshCloudFaces(base)).toBe(true);
+    expect(shouldRefreshCloudFaces({ ...base, inFlight: true })).toBe(false);
+    expect(
+      shouldRefreshCloudFaces({
+        ...base,
+        force: true,
+        missingSeat: false,
+        inFlight: false,
+        nowMs: 501,
+      }),
+    ).toBe(true);
   });
 });

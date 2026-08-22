@@ -19,6 +19,7 @@ import {
   observePersonCount,
   PoseTracker,
   rebindSlotsToTracks,
+  shouldRefreshCloudFaces,
   slotsFromSort,
   startCamera,
   torsoCenter,
@@ -36,8 +37,8 @@ import { publishClassroomEvent } from "./classroomBus";
 import { detectFacesViaQwen, fetchQwenFaceStatus } from "./qwenFaceDetect";
 
 const DETECT_INTERVAL_MS = 50;
-/** Qwen-VL is slower/costlier than local models — poll every ~2.5s (force on lock). */
-const FACE_DETECT_INTERVAL_MS = 2500;
+/** Qwen-VL: lock capture once; afterwards only if a seat is missing, at most every 1s. */
+const FACE_DETECT_INTERVAL_MS = 1000;
 const RAISE_MARGIN = 0.05;
 /** Consecutive frames at expected count before one-shot Python sort. */
 const LOCK_STABLE_FRAMES = 8;
@@ -117,8 +118,20 @@ function headAnchor(t: TrackedPose): { x: number; y: number } {
 
 function refreshFaceDescriptors(tracked: TrackedPose[], nowMs: number, force = false): void {
   if (!qwenFaceOk) return;
-  if (faceInFlight) return;
-  if (!force && nowMs - lastFaceTs < FACE_DETECT_INTERVAL_MS) return;
+  const missingSeat = numberingSlots.some((s) => s.trackId == null);
+  if (
+    !shouldRefreshCloudFaces({
+      force,
+      missingSeat,
+      nowMs,
+      lastFaceTs,
+      minIntervalMs: FACE_DETECT_INTERVAL_MS,
+      inFlight: faceInFlight,
+    })
+  ) {
+    if (!missingSeat) lastFaceBoxes = [];
+    return;
+  }
   faceInFlight = true;
   lastFaceTs = nowMs;
   void detectFacesViaQwen(video)
