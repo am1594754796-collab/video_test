@@ -1,6 +1,7 @@
 """
 HTTP API: person sort + speech answer match.
-Run: uvicorn server:app --host 127.0.0.1 --port 8765
+Run: python server.py
+  (or: uvicorn server:app --host 127.0.0.1 --port 8765)
 
 Answer bank path (relative to python/):
   1) SPEECH_ANSWERS_PATH env (relative or absolute)
@@ -292,3 +293,9 @@ async def speech_match(
             pass
 
     return _match_payload(result)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("server:app", host="127.0.0.1", port=8765)

@@ -38,10 +38,13 @@ if not exist "python\.venv\" (
 )
 
 echo.
-echo 启动 Python API : http://127.0.0.1:8765
-start "scoreboard-api" cmd /c "cd /d "%~dp0python" && .venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8765"
+call "%~dp0start-python-api.bat"
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
 
-timeout /t 2 /nobreak >nul
+timeout /t 3 /nobreak >nul
 
 echo 打开计分板 : http://localhost:5173/scoreboard.html
 echo 另请打开 people-fast.html 与 speech-online.html（同端口即可）

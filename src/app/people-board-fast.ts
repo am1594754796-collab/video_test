@@ -624,3 +624,6 @@ btnStop.addEventListener("click", onStop);
 btnReset.addEventListener("click", onResetRound);
 btnRelock.addEventListener("click", onRelock);
 void checkHealth();
+window.setInterval(() => {
+  if (!apiOk) void checkHealth();
+}, 2000);

@@ -40,9 +40,14 @@ echo.
 echo 答案库相对路径: 见 python\data\answers.path （默认 data/answers.json）
 echo 启动 Python API : http://127.0.0.1:8765
 echo 提示: 首次语音识别会下载 Whisper 模型，请耐心等待
-start "speech-api" cmd /c "cd /d "%~dp0python" && set SPEECH_WHISPER_MODEL=base&& .venv\Scripts\uvicorn.exe server:app --host 127.0.0.1 --port 8765"
+set SPEECH_WHISPER_MODEL=base
+call "%~dp0start-python-api.bat"
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
 
-timeout /t 2 /nobreak >nul
+timeout /t 3 /nobreak >nul
 
 echo 启动网页 : http://localhost:5173/speech.html
 start "" "http://localhost:5173/speech.html"

@@ -43,10 +43,13 @@ if exist "python\data\online.env" (
 ) else (
   echo 线上语义: 复制 python\data\online.env.example 为 online.env 并填入 SPEECH_LLM_API_KEY
 )
-echo 启动 Python API : http://127.0.0.1:8765
-start "speech-api" cmd /c "cd /d "%~dp0python" && .venv\Scripts\uvicorn.exe server:app --host 127.0.0.1 --port 8765"
+call "%~dp0start-python-api.bat"
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
 
-timeout /t 2 /nobreak >nul
+timeout /t 3 /nobreak >nul
 
 echo 启动网页 : http://localhost:5173/speech-online.html
 echo 提示: 需联网；请用 Chrome / Edge

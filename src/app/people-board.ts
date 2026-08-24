@@ -349,3 +349,6 @@ btnStart.addEventListener("click", () => void onStart());
 btnStop.addEventListener("click", onStop);
 btnReset.addEventListener("click", onReset);
 void checkHealth();
+window.setInterval(() => {
+  if (!apiOk) void checkHealth();
+}, 2000);

@@ -39,10 +39,13 @@ if not exist "python\.venv\" (
 )
 
 echo.
-echo 启动 Python API : http://127.0.0.1:8765
-start "people-sort-api" cmd /c "cd /d "%~dp0python" && .venv\Scripts\uvicorn.exe server:app --host 127.0.0.1 --port 8765"
+call "%~dp0start-python-api.bat"
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
 
-timeout /t 2 /nobreak >nul
+timeout /t 3 /nobreak >nul
 
 echo 启动网页 : http://localhost:5173/people-fast.html
 start "" "http://localhost:5173/people-fast.html"

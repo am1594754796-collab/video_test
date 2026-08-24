@@ -667,7 +667,7 @@ video_test/
 A: 用 `npm.cmd` 或 `start.bat`。
 
 **Q: 人物页显示 Python API 未连接**  
-A: 先开 `python` 下的 uvicorn，或重新运行 `start-people-fast.bat`；确认 8765 端口未被占用。未连接时该帧会回退本地编号。
+A: 请用 `start-people-fast.bat`（会启动 `python\server.py`，弹出 classroom-api 窗口）。也可双击 `start-python-api.bat`。确认 8765 未被占用。页面会每 2 秒重试连接。未连接时编号回退本地排序。
 
 **Q: `python` 命令不存在**  
 A: 用 winget 重装 Python 3.12，并勾选加入 PATH；或试用 `py -3 --version`。

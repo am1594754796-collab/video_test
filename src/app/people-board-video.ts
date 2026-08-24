@@ -730,3 +730,6 @@ window.addEventListener("beforeunload", () => {
 });
 
 void checkHealth();
+window.setInterval(() => {
+  if (!apiOk) void checkHealth();
+}, 2000);
