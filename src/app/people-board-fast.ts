@@ -39,7 +39,7 @@ import { detectFacesViaQwen, fetchQwenFaceStatus } from "./qwenFaceDetect";
 const DETECT_INTERVAL_MS = 50;
 /** Qwen-VL: lock capture once; afterwards only if a seat is missing, at most every 1s. */
 const FACE_DETECT_INTERVAL_MS = 1000;
-const RAISE_MARGIN = 0.05;
+const RAISE_MARGIN = 0.04;
 /** Consecutive frames at expected count before one-shot Python sort. */
 const LOCK_STABLE_FRAMES = 8;
 /** How far (normalized) a returning person can be from their locked seat to reclaim the number. */
@@ -96,7 +96,7 @@ let apiOk = false;
 let tracker = new PoseTracker({
   matchDistance: TRACK_MATCH_DISTANCE,
   maxMissed: TRACK_MAX_MISSED,
-  minFrames: 5,
+  minFrames: 8,
 });
 let race = new FirstRaiseTracker();
 let countLock: CountLockSnapshot = createCountLockState();
@@ -475,7 +475,12 @@ async function loop(nowMs: number): Promise<void> {
     if (!t.fresh) continue;
     // Only score raises after numbering is locked and this track owns a seat.
     if (countLock.locked && indexByTrackId.has(t.trackId)) {
-      t.debouncer.update(isHandRaised(t.landmarks, { margin: RAISE_MARGIN }));
+      t.debouncer.update(
+        isHandRaised(t.landmarks, {
+          margin: RAISE_MARGIN,
+          otherLandmarks: tracked.filter((o) => o.trackId !== t.trackId).map((o) => o.landmarks),
+        }),
+      );
     }
   }
 
@@ -563,7 +568,7 @@ async function onStart(): Promise<void> {
     tracker = new PoseTracker({
       matchDistance: TRACK_MATCH_DISTANCE,
       maxMissed: TRACK_MAX_MISSED,
-      minFrames: 5,
+      minFrames: 8,
     });
     clearNumberingLock();
     lastTs = 0;

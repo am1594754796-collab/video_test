@@ -33,18 +33,18 @@ let camera: CameraHandle | null = null;
 let landmarker: PoseLandmarker | null = null;
 let raf = 0;
 let lastTs = 0;
-let debouncer = new RaiseDebouncer({ minFrames: 5 });
+let debouncer = new RaiseDebouncer({ minFrames: 8 });
 let smoothed: NormalizedLandmark[] | null = null;
 let lastPoseAt = 0;
 let lastShownRaised: boolean | null = null;
 let canvasSized = false;
 
 function readMargin(): number {
-  return Number(inputMargin.value) || 0.08;
+  return Number(inputMargin.value) || 0.04;
 }
 
 function readMinFrames(): number {
-  return Math.max(1, Number(inputFrames.value) || 5);
+  return Math.max(1, Number(inputFrames.value) || 8);
 }
 
 function setStatus(text: string): void {
@@ -137,7 +137,12 @@ function loop(nowMs: number): void {
   if (poses.length > 0) {
     lastPoseAt = nowMs;
     const landmarks = smoothLandmarks(poses[0].landmarks);
-    const raised = debouncer.update(isHandRaised(landmarks, { margin }));
+    const raised = debouncer.update(
+      isHandRaised(landmarks, {
+        margin,
+        otherLandmarks: poses.slice(1).map((p) => p.landmarks),
+      }),
+    );
     drawPose(landmarks, raised);
     setRaisedUi(raised);
     setStatus(`单人调试 · 已锁定 · margin=${margin} · minFrames=${readMinFrames()}`);

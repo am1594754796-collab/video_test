@@ -34,7 +34,7 @@ import { detectFacesViaQwen, fetchQwenFaceStatus } from "./qwenFaceDetect";
 
 const DETECT_INTERVAL_MS = 50;
 const FACE_DETECT_INTERVAL_MS = 1000;
-const RAISE_MARGIN = 0.05;
+const RAISE_MARGIN = 0.04;
 const LOCK_STABLE_FRAMES = 8;
 const REBIND_MAX_DISTANCE = 0.35;
 const MIN_FACE_SIMILARITY = 0.82;
@@ -95,7 +95,7 @@ let apiOk = false;
 let tracker = new PoseTracker({
   matchDistance: TRACK_MATCH_DISTANCE,
   maxMissed: TRACK_MAX_MISSED,
-  minFrames: 5,
+  minFrames: 8,
 });
 let race = new FirstRaiseTracker();
 let countLock: CountLockSnapshot = createCountLockState();
@@ -477,7 +477,12 @@ async function loop(nowMs: number): Promise<void> {
   for (const t of tracked) {
     if (!t.fresh) continue;
     if (countLock.locked && indexByTrackId.has(t.trackId)) {
-      t.debouncer.update(isHandRaised(t.landmarks, { margin: RAISE_MARGIN }));
+      t.debouncer.update(
+        isHandRaised(t.landmarks, {
+          margin: RAISE_MARGIN,
+          otherLandmarks: tracked.filter((o) => o.trackId !== t.trackId).map((o) => o.landmarks),
+        }),
+      );
     }
   }
 
@@ -606,7 +611,7 @@ async function onStart(): Promise<void> {
     tracker = new PoseTracker({
       matchDistance: TRACK_MATCH_DISTANCE,
       maxMissed: TRACK_MAX_MISSED,
-      minFrames: 5,
+      minFrames: 8,
     });
     clearNumberingLock();
     lastTs = 0;

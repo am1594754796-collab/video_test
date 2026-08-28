@@ -3,7 +3,7 @@
  * Scoring / round flow live outside this package.
  */
 
-export { isHandRaised, POSE, type HandRaiseOptions, type PoseLandmark } from "./detect/isHandRaised";
+export { isHandRaised, handsRaised, POSE, type HandRaiseOptions, type PoseLandmark, type HandsRaised } from "./detect/isHandRaised";
 export { RaiseDebouncer, type RaiseDebouncerOptions } from "./detect/raiseDebouncer";
 export { dedupePosesByTorso, torsoCenter, type DedupeOptions } from "./detect/dedupePoses";
 export { PoseTracker, type TrackedPose, type PoseTrackerOptions } from "./detect/poseTracker";

@@ -20,7 +20,7 @@ import {
 } from "../vision";
 import { POSE } from "../vision/detect/isHandRaised";
 
-const RAISE_MARGIN = 0.05;
+const RAISE_MARGIN = 0.04;
 
 type SortedPerson = {
   index: number;
@@ -57,7 +57,7 @@ let raf = 0;
 let lastTs = 0;
 let canvasSized = false;
 let apiOk = false;
-let tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 12, minFrames: 4 });
+let tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 12, minFrames: 8 });
 let race = new FirstRaiseTracker();
 let lastUiKey = "";
 let lastWinnerKey = "";
@@ -242,7 +242,12 @@ async function loop(nowMs: number): Promise<void> {
 
   for (const t of tracked) {
     if (!t.fresh) continue;
-    t.debouncer.update(isHandRaised(t.landmarks, { margin: RAISE_MARGIN }));
+    t.debouncer.update(
+      isHandRaised(t.landmarks, {
+        margin: RAISE_MARGIN,
+        otherLandmarks: tracked.filter((o) => o.trackId !== t.trackId).map((o) => o.landmarks),
+      }),
+    );
   }
 
   const payload = tracked.map((t) => ({
@@ -299,7 +304,7 @@ async function onStart(): Promise<void> {
       minTrackingConfidence: 0.5,
     });
     camera = await startCamera(video);
-    tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 12, minFrames: 4 });
+    tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 12, minFrames: 8 });
     race = new FirstRaiseTracker();
     lastTs = 0;
     lastUiKey = "";
