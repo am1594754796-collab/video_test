@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bindPosesToSeatsByIndex,
   createSeatAnchors,
   matchDetectionsToSeats,
 } from "../../src/vision/detect/seatAnchors";
@@ -58,5 +59,39 @@ describe("seatAnchors", () => {
     expect(anchors[1]!.index).toBe(2);
     expect(anchors[1]!.fresh).toBe(false);
     expect(anchors[1]!.landmarks).not.toBeNull();
+  });
+
+  it("keeps numbering when people swap places if face templates match", () => {
+    const faceA = Array.from({ length: 8 }, (_, i) => (i === 0 ? 1 : 0));
+    const faceB = Array.from({ length: 8 }, (_, i) => (i === 1 ? 1 : 0));
+    let anchors = createSeatAnchors([
+      { index: 1, trackId: 1, x: 0.2, y: 0.5, faceDescriptor: faceA },
+      { index: 2, trackId: 2, x: 0.8, y: 0.5, faceDescriptor: faceB },
+    ]);
+    anchors = matchDetectionsToSeats(anchors, [
+      { x: 0.79, y: 0.5, landmarks: lm(0.79), faceDescriptor: faceA },
+      { x: 0.21, y: 0.5, landmarks: lm(0.21), faceDescriptor: faceB },
+    ]);
+    expect(anchors[0]!.index).toBe(1);
+    expect(anchors[0]!.x).toBeCloseTo(0.79);
+    expect(anchors[1]!.index).toBe(2);
+    expect(anchors[1]!.x).toBeCloseTo(0.21);
+  });
+
+  it("binds poses by Qwen index even when torso x order is reversed", () => {
+    const anchors = createSeatAnchors([
+      { index: 1, trackId: 1, x: 0.2, y: 0.5, faceDescriptor: null },
+      { index: 2, trackId: 2, x: 0.8, y: 0.5, faceDescriptor: null },
+    ]);
+    const next = bindPosesToSeatsByIndex(anchors, [
+      { index: 2, x: 0.21, y: 0.48, landmarks: lm(0.21) },
+      { index: 1, x: 0.79, y: 0.51, landmarks: lm(0.79) },
+    ]);
+    expect(next.map((s) => s.index)).toEqual([1, 2]);
+    expect(next[0]!.x).toBeCloseTo(0.2);
+    expect(next[1]!.x).toBeCloseTo(0.8);
+    expect(next[0]!.landmarks?.[POSE.LEFT_SHOULDER]?.x).toBeCloseTo(0.75);
+    expect(next[1]!.landmarks?.[POSE.LEFT_SHOULDER]?.x).toBeCloseTo(0.17);
+    expect(next.every((s) => s.fresh)).toBe(true);
   });
 });

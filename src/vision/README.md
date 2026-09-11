@@ -1,6 +1,10 @@
 # Vision Recognition（视觉识别）
 
-本目录 = **举手行为检测 / MediaPipe Pose** 视觉模块。
+本目录 = **举手行为检测** 视觉模块。
+
+人体：`千问 VL（人脸编号）→ 按人放大 ROI → MediaPipe Pose（单目标）`。
+- `detect/qwenMpCascade.ts` — 千问编号后人脸扩成单人框再跑 Pose
+- `detect/cascadePose.ts` — ROI → Pose，坐标映射回整帧
 
 - `detect/isHandRaised.ts` — 本人弯臂举手（左右独立）：腕过肩 + 肘弯曲 + 拒绝旁边人的手腕  
 - `detect/raiseDebouncer.ts` — 连续帧防抖  

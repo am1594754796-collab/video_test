@@ -5,25 +5,22 @@
 
 import { PoseLandmarker } from "@mediapipe/tasks-vision";
 import {
-  assignFaceDescriptorsToTracks,
   countSlotsWithFace,
   createCountLockState,
   createPoseLandmarker,
-  collapseByMinGapX,
   createSeatAnchors,
-  dedupeRowPoses,
-  detectPosesMultiBand,
-  emaBlendLandmarks,
   FirstRaiseTracker,
   FULL_MODEL_URL,
-  matchDetectionsToSeats,
-  observePersonCount,
+  bindPosesToSeatsByIndex,
+  followLockedFaces,
+  matchFacesToIds,
+  numberFacesLeftToRight,
+  nudgeLockedFacesTowardHeads,
   PoseTracker,
-  refineSeatsWithCrops,
+  runQwenMpCascade,
   SeatRaiseTracker,
   seatsToNumberingSlots,
-  selectPosesBySeatBins,
-  shouldRefreshCloudFaces,
+  shouldPollVisionFaces,
   slotsFromSort,
   torsoCenter,
   unlockCountLock,
@@ -31,7 +28,9 @@ import {
   type FaceBox,
   type FaceDescriptor,
   type FirstRaiseEvent,
+  type NumberedFace,
   type NumberingSlot,
+  type PersonBox,
   type PoseLandmark,
   type SeatAnchor,
   type SeatRaiseUpdate,
@@ -43,25 +42,23 @@ import { detectFacesViaQwen, fetchQwenFaceStatus } from "./qwenFaceDetect";
 
 const DETECT_INTERVAL_MS = 55;
 const DETECT_INTERVAL_LOCKED_MS = 48;
-const FACE_DETECT_INTERVAL_MS = 1000;
+const FACE_DETECT_INTERVAL_MS = 900;
+const FACE_DETECT_INTERVAL_LOCKED_MS = 1600;
+const NUMBERING_MAX_TRIES = 6;
+const NUMBERING_RETRY_MS = 700;
 const RAISE_MARGIN = 0.028;
 const RAISE_MIN_VISIBILITY = 0.22;
 const RAISE_MIN_FRAMES = 1;
 const RAISE_SCORE_THRESHOLD = 0.014;
-const LOCK_STABLE_FRAMES = 8;
 /** Prefer horizontal seat lock; avoid stealing a neighbor track. */
 const TRACK_MATCH_DISTANCE = 0.16;
 const TRACK_MATCH_Y_WEIGHT = 0.35;
 /** Drop unmatched ghosts, but keep a short grace for brief dropouts. */
 const TRACK_MAX_MISSED = 10;
-const LANDMARK_EMA_ALPHA = 0.4;
 const BUS_SOURCE = "people-video";
 
 const frameCanvas = document.createElement("canvas");
-const bandCanvas = document.createElement("canvas");
 const cropCanvas = document.createElement("canvas");
-
-type PersonPoint = { id: number; x: number; y: number };
 
 type SortedPerson = {
   index: number;
@@ -95,12 +92,17 @@ const btnStop = document.querySelector<HTMLButtonElement>("#btn-stop")!;
 const btnReset = document.querySelector<HTMLButtonElement>("#btn-reset")!;
 const btnRelock = document.querySelector<HTMLButtonElement>("#btn-relock")!;
 const inputExpected = document.querySelector<HTMLInputElement>("#input-expected")!;
+const loadOverlay = document.querySelector<HTMLElement>("#load-overlay")!;
+const loadTitle = document.querySelector<HTMLElement>("#load-title")!;
+const loadDetail = document.querySelector<HTMLElement>("#load-detail")!;
 
-const SORT_URL = "/api/people/sort";
 const HEALTH_URL = "/api/health";
 
 let objectUrl: string | null = null;
 let detecting = false;
+let modelsReady = false;
+let modelsPromise: Promise<void> | null = null;
+let videoReady = false;
 let landmarker: PoseLandmarker | null = null;
 let qwenFaceOk = false;
 let faceInFlight = false;
@@ -109,6 +111,9 @@ let lastTs = 0;
 let lastFaceTs = 0;
 let lastFaceByTrack = new Map<number, FaceDescriptor>();
 let lastFaceBoxes: FaceBox[] = [];
+let lastNumberedFaces: NumberedFace[] = [];
+let lastPersonCrops: PersonBox[] = [];
+let faceBySeatIndex = new Map<number, FaceBox>();
 let canvasSized = false;
 let apiOk = false;
 let tracker = new PoseTracker({
@@ -126,9 +131,12 @@ let seatRaiseByIndex = new Map<number, SeatRaiseTracker>();
 let lastRaiseByIndex = new Map<number, SeatRaiseUpdate>();
 let lockedPeople: SortedPerson[] = [];
 let sortInFlight = false;
+let detectInFlight = false;
 let lastUiKey = "";
 let lastWinnerKey = "";
 let seeking = false;
+/** True while Qwen numbering is required and raise detection must not run. */
+let numberingPhase = false;
 
 function seatHeadAnchor(seat: SeatAnchor): { x: number; y: number } {
   const nose = seat.landmarks?.[POSE.NOSE];
@@ -138,40 +146,77 @@ function seatHeadAnchor(seat: SeatAnchor): { x: number; y: number } {
   return { x: seat.x, y: Math.max(0, seat.y - 0.12) };
 }
 
-function refreshFaceDescriptorsForSeats(nowMs: number, force = false): void {
-  if (!qwenFaceOk || seatAnchors.length === 0) return;
-  const missingSeat = seatAnchors.some((s) => !s.faceDescriptor);
+function commitLockedFaces(faces: readonly NumberedFace[]): void {
+  lastNumberedFaces = [...faces].sort((a, b) => a.index - b.index);
+  faceBySeatIndex = new Map(lastNumberedFaces.map((f) => [f.index, f]));
+  if (seatAnchors.length === 0) return;
+  seatAnchors = seatAnchors.map((s) => {
+    const f = faceBySeatIndex.get(s.index);
+    if (!f) return s;
+    return { ...s, x: f.cx, y: f.cy, debouncer: s.debouncer };
+  });
+}
+
+function applyQwenFaces(faces: FaceBox[], expected: number): NumberedFace[] {
+  lastFaceBoxes = faces;
+  if (countLock.locked && lastNumberedFaces.length > 0) {
+    // Identity is frozen at lock. New Qwen boxes only follow the previous face.
+    commitLockedFaces(followLockedFaces(lastNumberedFaces, faces));
+    numberingSlots = seatsToNumberingSlots(seatAnchors);
+    return lastNumberedFaces;
+  }
+
+  const numbered = numberFacesLeftToRight(faces, expected);
+  lastNumberedFaces = numbered;
+  faceBySeatIndex = new Map(numbered.map((f) => [f.index, f]));
+  return numbered;
+}
+
+function bindFaceTemplatesToSeats(): number {
+  if (seatAnchors.length === 0 || lastFaceBoxes.length === 0) {
+    return countSlotsWithFace(numberingSlots);
+  }
+  const matched = matchFacesToIds(
+    video,
+    seatAnchors.map((s) => {
+      const h = seatHeadAnchor(s);
+      return { trackId: s.index, x: h.x, y: h.y, template: s.faceDescriptor };
+    }),
+    lastFaceBoxes,
+  );
+  lastFaceByTrack = new Map();
+  for (const seat of seatAnchors) {
+    const hit = matched.get(seat.index);
+    if (!hit) continue;
+    seat.faceDescriptor = hit.descriptor;
+    lastFaceByTrack.set(seat.index, hit.descriptor);
+  }
+  numberingSlots = seatsToNumberingSlots(seatAnchors);
+  return countSlotsWithFace(numberingSlots);
+}
+
+function pollQwenNumbering(nowMs: number, expected: number, force = false): void {
+  if (!qwenFaceOk) return;
   if (
-    !shouldRefreshCloudFaces({
+    !shouldPollVisionFaces({
       force,
-      missingSeat,
       nowMs,
       lastFaceTs,
-      minIntervalMs: FACE_DETECT_INTERVAL_MS,
+      minIntervalMs: countLock.locked ? FACE_DETECT_INTERVAL_LOCKED_MS : FACE_DETECT_INTERVAL_MS,
       inFlight: faceInFlight,
     })
   ) {
-    if (!missingSeat) lastFaceBoxes = [];
     return;
   }
   faceInFlight = true;
   lastFaceTs = nowMs;
-  void detectFacesViaQwen(video)
+  void detectFacesViaQwen(video, { maxFaces: expected })
     .then((faces) => {
-      lastFaceBoxes = faces;
-      lastFaceByTrack = assignFaceDescriptorsToTracks(
-        video,
-        seatAnchors.map((s) => {
-          const h = seatHeadAnchor(s);
-          return { trackId: s.index, x: h.x, y: h.y };
-        }),
-        faces,
-      );
-      for (const seat of seatAnchors) {
-        const desc = lastFaceByTrack.get(seat.index);
-        if (desc) seat.faceDescriptor = desc;
+      if (!detecting) return;
+      const numbered = applyQwenFaces(faces, expected);
+      if (!countLock.locked && numbered.length === expected && !sortInFlight) {
+        void lockNumberingFromQwen(numbered);
       }
-      numberingSlots = seatsToNumberingSlots(seatAnchors);
     })
     .catch((err) => {
       console.warn("[face/qwen]", err);
@@ -181,29 +226,128 @@ function refreshFaceDescriptorsForSeats(nowMs: number, force = false): void {
     });
 }
 
-async function captureFaceTemplatesForSeats(): Promise<number> {
-  if (!qwenFaceOk || seatAnchors.length === 0) return 0;
-  try {
-    lastFaceBoxes = await detectFacesViaQwen(video);
-    lastFaceByTrack = assignFaceDescriptorsToTracks(
-      video,
-      seatAnchors.map((s) => {
-        const h = seatHeadAnchor(s);
-        return { trackId: s.index, x: h.x, y: h.y };
-      }),
-      lastFaceBoxes,
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function waitSeeked(): Promise<void> {
+  if (!video.seeking) return;
+  await new Promise<void>((resolve) => {
+    video.addEventListener("seeked", () => resolve(), { once: true });
+  });
+}
+
+async function ensureVideoFrame(): Promise<boolean> {
+  if (video.readyState < 2) {
+    try {
+      await video.play();
+      video.pause();
+    } catch {
+      return false;
+    }
+  }
+  return ensureCanvasSize();
+}
+
+function setRaiseButtonsEnabled(enabled: boolean): void {
+  btnPause.disabled = !enabled;
+  btnReset.disabled = !enabled;
+  btnRelock.disabled = !enabled;
+}
+
+/**
+ * Pause the video, run Qwen until expected faces are numbered left→right, then lock.
+ * Raise detection must not start until this returns true.
+ */
+async function awaitInitialNumbering(opts?: { rewind?: boolean }): Promise<boolean> {
+  const expected = readExpectedCount();
+  numberingPhase = true;
+  setRaiseButtonsEnabled(false);
+  showLoadOverlay("正在千问编号", `检测人脸并按左→右排序 · 需要 ${expected} 人 · 完成前不检测举手`);
+  setStatus(`千问编号中 · 需要 ${expected} 人 · 编号锁定前不检测举手`);
+
+  if (opts?.rewind !== false) {
+    video.pause();
+    video.currentTime = 0;
+    await waitSeeked();
+  } else {
+    video.pause();
+  }
+  if (!(await ensureVideoFrame())) {
+    showLoadOverlay("无法读取画面", "请确认视频已加载完成", true);
+    numberingPhase = false;
+    return false;
+  }
+
+  for (let attempt = 1; attempt <= NUMBERING_MAX_TRIES && detecting; attempt++) {
+    showLoadOverlay(
+      "正在千问编号",
+      `第 ${attempt}/${NUMBERING_MAX_TRIES} 次 · 左→右 · 需要 ${expected} 人`,
     );
-    lastFaceTs = performance.now();
-  } catch (err) {
-    console.warn("[face/qwen] lock capture failed", err);
-    return countSlotsWithFace(numberingSlots);
+    setStatus(`千问编号中 ${attempt}/${NUMBERING_MAX_TRIES} · 需要 ${expected} 人 · 请稍候`);
+    try {
+      faceInFlight = true;
+      lastFaceTs = performance.now();
+      const faces = await detectFacesViaQwen(video, { maxFaces: expected });
+      if (!detecting) return false;
+      const numbered = applyQwenFaces(faces, expected);
+      renderHud(numbered.length, [], null, false);
+      drawOverlay([], [], null, false);
+      if (numbered.length === expected) {
+        await lockNumberingFromQwen(numbered);
+        if (!detecting || !countLock.locked) return false;
+        numberingPhase = false;
+        hideLoadOverlay();
+        setRaiseButtonsEnabled(true);
+        setStatus(`编号已确认 ${expected} 人（左→右）· 开始举手检测`);
+        return true;
+      }
+      showLoadOverlay(
+        "人数未齐",
+        `千问见到 ${numbered.length}/${expected} 人，继续识别…`,
+      );
+    } catch (err) {
+      console.warn("[face/qwen] numbering", err);
+      const msg = err instanceof Error ? err.message : "识别失败";
+      showLoadOverlay("千问编号失败", `${msg} · 正在重试…`);
+    } finally {
+      faceInFlight = false;
+    }
+    if (attempt < NUMBERING_MAX_TRIES && detecting) await sleep(NUMBERING_RETRY_MS);
   }
-  for (const seat of seatAnchors) {
-    const desc = lastFaceByTrack.get(seat.index);
-    if (desc) seat.faceDescriptor = desc;
+
+  numberingPhase = false;
+  if (!detecting) return false;
+  showLoadOverlay(
+    "编号未完成",
+    `未能识别到 ${expected} 人。请核对「需要人数」或画面后再点「开始检测」。`,
+    true,
+  );
+  setStatus(`编号未完成 · 需要 ${expected} 人 · 未开始举手检测`);
+  return false;
+}
+
+/** Keep Qwen seat numbers on cascade crops; never re-rank by torso x. */
+function indexedPosesFromCascade(
+  poses: readonly { box: PersonBox; landmarks: readonly PoseLandmark[] }[],
+): Array<{ index: number; x: number; y: number; landmarks: readonly PoseLandmark[] }> {
+  const out: Array<{
+    index: number;
+    x: number;
+    y: number;
+    landmarks: readonly PoseLandmark[];
+  }> = [];
+  for (const p of poses) {
+    const index = p.box.index;
+    if (index == null) continue;
+    const c = torsoCenter(p.landmarks);
+    const nose = p.landmarks[POSE.NOSE];
+    const vis = nose?.visibility ?? 1;
+    const x = nose && vis >= 0.25 ? nose.x : c.x;
+    const y = nose && vis >= 0.25 ? nose.y : Math.max(0, c.y - 0.1);
+    out.push({ index, x, y, landmarks: p.landmarks });
   }
-  numberingSlots = seatsToNumberingSlots(seatAnchors);
-  return countSlotsWithFace(numberingSlots);
+  return out;
 }
 
 function readExpectedCount(): number {
@@ -214,6 +358,48 @@ function readExpectedCount(): number {
 
 function setStatus(text: string): void {
   statusEl.textContent = text;
+}
+
+function hasVideoFile(): boolean {
+  return !!(objectUrl || video.src);
+}
+
+function showLoadOverlay(title: string, detail: string, isError = false): void {
+  loadTitle.textContent = title;
+  loadDetail.textContent = detail;
+  loadOverlay.hidden = false;
+  loadOverlay.classList.toggle("is-error", isError);
+}
+
+function hideLoadOverlay(): void {
+  loadOverlay.hidden = true;
+  loadOverlay.classList.remove("is-error");
+}
+
+function syncStartEnabled(): void {
+  const canStart = modelsReady && qwenFaceOk && videoReady && hasVideoFile() && !detecting;
+  btnStart.disabled = !canStart;
+  seekEl.disabled = !videoReady || !hasVideoFile();
+}
+
+function refreshIdlePrompt(): void {
+  if (detecting) return;
+  if (!modelsReady) {
+    showLoadOverlay("正在加载检测模型…", loadDetail.textContent || "请稍候，加载完成前不能开始检测");
+    return;
+  }
+  if (hasVideoFile() && !videoReady) {
+    showLoadOverlay("正在加载视频…", fileNameEl.textContent || "请稍候");
+    setStatus("视频加载中，完成后才能开始检测");
+    return;
+  }
+  hideLoadOverlay();
+  if (hasVideoFile() && videoReady) {
+    setStatus("加载完成 · 可以开始检测");
+  } else {
+    setStatus("模型已就绪 · 请选择本地视频，加载完成后再开始检测");
+  }
+  syncStartEnabled();
 }
 
 function setApiStatus(ok: boolean, detail?: string): void {
@@ -247,29 +433,6 @@ async function checkHealth(): Promise<boolean> {
     setApiStatus(false, "请先启动 python/server.py");
     return false;
   }
-}
-
-async function sortViaPython(people: PersonPoint[]): Promise<SortResponse> {
-  const res = await fetch(SORT_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ people, max_people: 6 }),
-  });
-  if (!res.ok) throw new Error(`sort HTTP ${res.status}`);
-  return (await res.json()) as SortResponse;
-}
-
-function sortLocal(people: PersonPoint[]): SortResponse {
-  const sorted = [...people].sort((a, b) => a.x - b.x).slice(0, 6);
-  return {
-    count: sorted.length,
-    people: sorted.map((p, i) => ({
-      index: i + 1,
-      x: p.x,
-      y: p.y,
-      id: p.id,
-    })),
-  };
 }
 
 function applyLockFromSort(sorted: SortResponse): void {
@@ -318,82 +481,42 @@ function updateSeatRaises(seats: SeatAnchor[], nowMs: number): void {
   }
 }
 
-function seedSeatsFromPoses(
-  poses: readonly {
-    x: number;
-    y: number;
-    landmarks: readonly PoseLandmark[];
-  }[],
-): void {
-  if (seatAnchors.length === 0) return;
-  seatAnchors = matchDetectionsToSeats(
-    seatAnchors,
-    poses.map((p) => ({
-      x: p.x,
-      y: p.y,
-      landmarks: p.landmarks,
-    })),
-    { maxDistance: 0.22, yWeight: TRACK_MATCH_Y_WEIGHT, maxMissed: TRACK_MAX_MISSED },
-  );
-  numberingSlots = seatsToNumberingSlots(seatAnchors);
-}
-
-async function lockNumbering(payload: PersonPoint[], tracked: TrackedPose[]): Promise<void> {
-  if (sortInFlight) return;
+async function lockNumberingFromQwen(numbered: NumberedFace[]): Promise<void> {
+  if (sortInFlight || countLock.locked) return;
+  if (numbered.length === 0) return;
   sortInFlight = true;
   try {
-    if (!apiOk) await checkHealth();
-    const sorted = apiOk ? await sortViaPython(payload) : sortLocal(payload);
-    if (apiOk) setApiStatus(true, "编号已锁定");
-    applyLockFromSort(sorted);
-    seedSeatsFromPoses(
-      tracked.map((t) => ({
-        x: t.center.x,
-        y: t.center.y,
-        landmarks: t.landmarks,
+    countLock = {
+      locked: true,
+      streak: 1,
+      lastCount: numbered.length,
+    };
+    applyLockFromSort({
+      count: numbered.length,
+      people: numbered.map((f) => ({
+        index: f.index,
+        x: f.cx,
+        y: f.cy,
+        id: f.index,
       })),
-    );
-    const faceBound = await captureFaceTemplatesForSeats();
+    });
+    commitLockedFaces(numbered);
+    const faceBound = bindFaceTemplatesToSeats();
     race = new FirstRaiseTracker();
-    // Prime as "not raised" so already-up hands in the video still count as a rising edge.
     race.update(
-      sorted.people.map((p) => ({ personIndex: p.index, raised: false })),
+      numbered.map((f) => ({ personIndex: f.index, raised: false })),
       performance.now(),
     );
     lastUiKey = "";
     lastWinnerKey = "";
     publishClassroomEvent({
       type: "numbering-locked",
-      seats: sorted.people.map((p) => p.index),
+      seats: numbered.map((f) => f.index),
       source: BUS_SOURCE,
     });
+    setApiStatus(true, "千问编号已锁定");
     setStatus(
-      `已锁定 ${sorted.count} 人座位 · 身份按座位固定 · 人脸 ${faceBound}/${sorted.count} · 开始举手检测`,
-    );
-  } catch {
-    setApiStatus(false, "排序失败，已用本地锁定");
-    const local = sortLocal(payload);
-    applyLockFromSort(local);
-    seedSeatsFromPoses(
-      tracked.map((t) => ({
-        x: t.center.x,
-        y: t.center.y,
-        landmarks: t.landmarks,
-      })),
-    );
-    const faceBound = await captureFaceTemplatesForSeats();
-    race = new FirstRaiseTracker();
-    race.update(
-      local.people.map((p) => ({ personIndex: p.index, raised: false })),
-      performance.now(),
-    );
-    publishClassroomEvent({
-      type: "numbering-locked",
-      seats: local.people.map((p) => p.index),
-      source: BUS_SOURCE,
-    });
-    setStatus(
-      `本地锁定 ${payload.length} 人座位 · 身份按座位固定 · 人脸 ${faceBound}/${payload.length} · 开始举手检测`,
+      `千问已锁定 ${numbered.length} 人（左→右）· 人脸 ${faceBound}/${numbered.length} · 单人放大 Pose 检测举手`,
     );
   } finally {
     sortInFlight = false;
@@ -442,7 +565,12 @@ function renderHud(
         const live = people.find((p) => p.index === base.index);
         return { ...base, raised: live?.raised ?? false };
       })
-    : [];
+    : lastNumberedFaces.map((f) => ({
+        index: f.index,
+        x: f.cx,
+        y: f.cy,
+        raised: false,
+      }));
 
   for (const p of display) {
     const li = document.createElement("li");
@@ -461,6 +589,37 @@ function renderHud(
   renderWinner(winner);
 }
 
+function drawPersonCrops(boxes: readonly PersonBox[], w: number, h: number): void {
+  if (boxes.length === 0) return;
+  ctx.save();
+  ctx.setLineDash([6, 4]);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(240, 180, 41, 0.8)";
+  ctx.font = "12px Segoe UI, sans-serif";
+  ctx.fillStyle = "rgba(240, 180, 41, 0.95)";
+  for (const b of boxes) {
+    const x = b.xMin * w;
+    const y = b.yMin * h;
+    ctx.strokeRect(x, y, (b.xMax - b.xMin) * w, (b.yMax - b.yMin) * h);
+    const label = b.index != null ? `放大 #${b.index}` : "放大";
+    ctx.fillText(label, x + 4, Math.max(14, y - 4));
+  }
+  ctx.restore();
+}
+
+function drawNumberedFaces(w: number, h: number): void {
+  const faces = lastNumberedFaces;
+  for (const f of faces) {
+    ctx.strokeStyle = "rgba(61, 156, 253, 0.85)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(f.xMin * w, f.yMin * h, f.width * w, f.height * h);
+    const label = f.index != null ? `#${f.index}` : "脸";
+    ctx.fillStyle = "rgba(61, 156, 253, 0.95)";
+    ctx.font = "bold 16px Segoe UI, sans-serif";
+    ctx.fillText(label, f.xMin * w + 4, Math.max(16, f.yMin * h - 6));
+  }
+}
+
 function drawOverlay(
   tracked: TrackedPose[],
   people: SortedPerson[],
@@ -470,13 +629,10 @@ function drawOverlay(
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
+  drawPersonCrops(lastPersonCrops, w, h);
+  drawNumberedFaces(w, h);
 
   if (locked) {
-    for (const f of lastFaceBoxes) {
-      ctx.strokeStyle = "rgba(61, 156, 253, 0.55)";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(f.xMin * w, f.yMin * h, f.width * w, f.height * h);
-    }
     for (const seat of seatAnchors) {
       const index = seat.index;
       const isWinner = winner != null && index === winner.personIndex;
@@ -497,7 +653,10 @@ function drawOverlay(
       if (isWinner) text = `#${index} 最先`;
       else if (raised) text = `#${index} 举手`;
       else text = `#${index}`;
-      ctx.fillText(text, seat.x * w - 14, seat.y * h - 16);
+      const face = lastNumberedFaces.find((f) => f.index === index);
+      const lx = face?.cx ?? seat.x;
+      const ly = face?.cy ?? seat.y;
+      ctx.fillText(text, lx * w - 14, ly * h - 16);
     }
     void people;
     void tracked;
@@ -533,6 +692,10 @@ function clearNumberingLock(): void {
   lockedPeople = [];
   lastFaceByTrack = new Map();
   lastFaceBoxes = [];
+  lastNumberedFaces = [];
+  lastPersonCrops = [];
+  faceBySeatIndex = new Map();
+  lastFaceTs = 0;
   race = new FirstRaiseTracker();
   lastUiKey = "";
   renderWinner(null);
@@ -541,7 +704,7 @@ function clearNumberingLock(): void {
 
 async function loop(nowMs: number): Promise<void> {
   raf = requestAnimationFrame((t) => void loop(t));
-  if (!detecting || !landmarker || video.readyState < 2) return;
+  if (!detecting || !modelsReady || !landmarker || video.readyState < 2) return;
   if (video.paused || video.ended || seeking) {
     updateTimeUi();
     return;
@@ -550,64 +713,46 @@ async function loop(nowMs: number): Promise<void> {
   const interval = countLock.locked ? DETECT_INTERVAL_LOCKED_MS : DETECT_INTERVAL_MS;
   if (nowMs - lastTs < interval) return;
   lastTs = nowMs;
+  if (detectInFlight) return;
+  detectInFlight = true;
+  try {
+  if (numberingPhase || !countLock.locked) {
+    updateTimeUi();
+    renderHud(lastNumberedFaces.length, [], null, false);
+    drawOverlay([], [], null, false);
+    if (numberingPhase) {
+      setStatus(`千问编号中 · 需要 ${readExpectedCount()} 人 · 编号锁定前不检测举手`);
+    }
+    return;
+  }
 
-  const raw = detectPosesMultiBand(landmarker, video, frameCanvas, bandCanvas);
   const expected = readExpectedCount();
-  // After lock: do not reshuffle seats every frame. Only collapse true duplicates.
-  const poses = countLock.locked
-    ? collapseByMinGapX(
-        dedupeRowPoses(raw, { duplicateDistance: 0.032, minSeparationX: 0.035 }),
-        0.034,
-      )
-    : selectPosesBySeatBins(raw, {
-        expectedCount: expected,
-        duplicateDistance: 0.032,
-        minSeparationX: 0.035,
-        minSeatGap: 0.036,
-      });
+  pollQwenNumbering(nowMs, expected);
+  const cascade = runQwenMpCascade({
+    landmarker,
+    frameCanvas,
+    cropCanvas,
+    source: video,
+    faces: lastFaceBoxes,
+    seats: countLock.locked && seatAnchors.length > 0 ? seatAnchors : undefined,
+    faceByIndex: faceBySeatIndex,
+  });
+  lastPersonCrops = cascade.boxes;
+  const poses = cascade.poses;
 
   updateTimeUi();
 
-  // ——— Locked: identity = seat index (not MediaPipe trackId) ———
-  if (countLock.locked) {
-    seatAnchors = matchDetectionsToSeats(
-      seatAnchors,
-      poses.map((p) => {
-        const c = torsoCenter(p.landmarks);
-        return { x: c.x, y: c.y, landmarks: p.landmarks };
-      }),
-      {
-        maxDistance: 0.18,
-        yWeight: TRACK_MATCH_Y_WEIGHT,
-        maxMissed: TRACK_MAX_MISSED,
-      },
-    );
-
-    // Per-seat crop re-detect → larger person → stabler shoulders/wrists.
-    const refined = refineSeatsWithCrops(
-      landmarker,
-      frameCanvas,
-      cropCanvas,
-      seatAnchors.map((s) => ({ x: s.x, y: s.y })),
-      { halfW: 0.1, halfH: 0.18, padTop: 0.24, maxTorsoDist: 0.15 },
-    );
-    for (let i = 0; i < seatAnchors.length; i++) {
-      const seat = seatAnchors[i]!;
-      const crop = refined[i];
-      const base = crop?.landmarks ?? seat.landmarks;
-      if (!base) continue;
-      seat.landmarks = emaBlendLandmarks(seat.landmarks, base as PoseLandmark[], LANDMARK_EMA_ALPHA);
-      if (crop) {
-        const c = torsoCenter(seat.landmarks);
-        seat.x = c.x;
-        seat.y = c.y;
-        seat.fresh = true;
-        seat.missed = 0;
-      }
-    }
+  // Raise detection only after numbering is locked.
+  // Identity stays on the locked face index — pose must not move the number.
+  const indexedPoses = indexedPosesFromCascade(poses);
+  seatAnchors = bindPosesToSeatsByIndex(seatAnchors, indexedPoses, {
+    maxMissed: TRACK_MAX_MISSED,
+  });
+  if (lastNumberedFaces.length > 0) {
+    commitLockedFaces(nudgeLockedFacesTowardHeads(lastNumberedFaces, indexedPoses));
+  }
 
     numberingSlots = seatsToNumberingSlots(seatAnchors);
-    refreshFaceDescriptorsForSeats(nowMs);
     updateSeatRaises(seatAnchors, nowMs);
 
     const people = peopleFromSeats(seatAnchors);
@@ -634,7 +779,14 @@ async function loop(nowMs: number): Promise<void> {
     renderHud(liveSeats, people, winner, true);
     drawOverlay([], people, winner, true);
 
-    const raisedIndexes = people.filter((p) => p.raised).map((p) => p.index);
+    const raisedIndexes = people
+      .filter((p) => p.raised)
+      .map((p) => ({
+        index: p.index,
+        t: lastRaiseByIndex.get(p.index)?.edgeAtMs ?? Number.POSITIVE_INFINITY,
+      }))
+      .sort((a, b) => a.t - b.t || a.index - b.index)
+      .map((p) => p.index);
     const missed = seatAnchors.filter((s) => !s.fresh).length;
     if (winner) {
       setStatus(`最先举手：#${winner.personIndex} · 「下一轮」再赛 · 「重新编号」可重排`);
@@ -643,43 +795,14 @@ async function loop(nowMs: number): Promise<void> {
         `座位锁定 ${people.length} · 在场 ${liveSeats} · 人脸 ${faceBound} · ${missed} 座短暂丢失（编号不变）`,
       );
     } else if (raisedIndexes.length === 0) {
-      setStatus(`座位锁定 ${people.length} 人 · 局部重检+平滑 · 等待举手…`);
+      setStatus(
+        `座位锁定 ${people.length} 人 · 千问编号 · 单人放大 Pose · 等待举手…`,
+      );
     } else {
       setStatus(`举手中：${raisedIndexes.map((n) => `#${n}`).join("、")}`);
     }
-    return;
-  }
-
-  // ——— Pre-lock: temporary PoseTracker ids only for sorting ———
-  const trackedAll = tracker.update(poses);
-  const fresh = trackedAll.filter((t) => t.fresh);
-  const tracked = (fresh.length >= expected ? fresh : trackedAll).slice(0, expected);
-  const payload = tracked.map((t) => ({
-    id: t.trackId,
-    x: torsoCenter(t.landmarks).x,
-    y: torsoCenter(t.landmarks).y,
-  }));
-  const liveCount = payload.length;
-
-  const observed = observePersonCount(countLock, liveCount, {
-    expectedCount: expected,
-    minStableFrames: LOCK_STABLE_FRAMES,
-  });
-  countLock = observed.state;
-  renderHud(liveCount, [], null, false);
-  drawOverlay(tracked, [], null, false);
-
-  if (observed.shouldLock) {
-    setStatus(`人数已达 ${expected} · 正在 Python 排序锁定…`);
-    await lockNumbering(payload, tracked);
-  } else if (liveCount === expected) {
-    setStatus(
-      `人数 ${liveCount}/${expected} · 稳定中 ${countLock.streak}/${LOCK_STABLE_FRAMES} 帧（分条 ${raw.length}→座位 ${poses.length}）`,
-    );
-  } else {
-    setStatus(
-      `等待出镜人数达到 ${expected}（当前 ${liveCount}，分条 ${raw.length}→座位 ${poses.length}）· 暂不排序`,
-    );
+  } finally {
+    detectInFlight = false;
   }
 }
 
@@ -710,46 +833,98 @@ function revokeObjectUrl(): void {
 function onFileSelected(): void {
   const file = inputVideo.files?.[0];
   if (!file) return;
-  stopDetection({ keepFile: false });
+  stopDetection({ keepFile: false, keepModels: true });
   revokeObjectUrl();
+  videoReady = false;
   objectUrl = URL.createObjectURL(file);
   video.srcObject = null;
   video.src = objectUrl;
   video.load();
   fileNameEl.textContent = file.name;
-  btnStart.disabled = false;
-  seekEl.disabled = false;
-  setStatus(`已加载「${file.name}」· 点「开始检测」播放并分析`);
+  seekEl.disabled = true;
+  btnStart.disabled = true;
+  showLoadOverlay("正在加载视频…", file.name);
+  setStatus(`正在加载「${file.name}」· 完成后才能开始检测`);
+}
+
+async function preloadModels(): Promise<void> {
+  if (modelsReady) return;
+  if (modelsPromise) return modelsPromise;
+  modelsPromise = (async () => {
+    try {
+      showLoadOverlay("正在加载检测模型…", "1/2 检查千问人脸编号");
+      setStatus("正在连接千问编号并加载 Pose，完成后才能开始检测");
+      syncStartEnabled();
+      const healthy = await checkHealth();
+      try {
+        const faceSt = await fetchQwenFaceStatus();
+        qwenFaceOk = !!faceSt.configured;
+        if (qwenFaceOk) {
+          setApiStatus(true, `千问编号 · ${faceSt.model ?? "qwen-vl"}`);
+        } else {
+          setApiStatus(healthy, "千问未配置 · 请在 python/data/api.env 填写 LLM_API_KEY");
+        }
+      } catch {
+        qwenFaceOk = false;
+        setApiStatus(healthy, "无法读取千问状态 · 请先启动 python/server.py");
+      }
+
+      if (!qwenFaceOk) {
+        modelsReady = false;
+        modelsPromise = null;
+        showLoadOverlay(
+          "千问未就绪",
+          "检测只走千问：请启动 Python API，并在 python/data/api.env 填写 LLM_API_KEY",
+          true,
+        );
+        setStatus("千问未就绪 · 未配置或 API 未启动，无法开始检测");
+        syncStartEnabled();
+        return;
+      }
+
+      showLoadOverlay("正在加载检测模型…", "2/2 MediaPipe Pose（按编号局部放大）");
+      landmarker = await createPoseLandmarker({
+        numPoses: 1,
+        runningMode: "IMAGE",
+        modelAssetPath: FULL_MODEL_URL,
+        minPoseDetectionConfidence: 0.35,
+        minPosePresenceConfidence: 0.35,
+        minTrackingConfidence: 0.35,
+      });
+      modelsReady = true;
+      refreshIdlePrompt();
+    } catch (err) {
+      console.error(err);
+      modelsReady = false;
+      landmarker?.close();
+      landmarker = null;
+      modelsPromise = null;
+      const msg = err instanceof Error ? err.message : "模型加载失败";
+      showLoadOverlay("检测模型加载失败", msg, true);
+      setStatus(`模型加载失败：${msg} · 请刷新页面重试`);
+      syncStartEnabled();
+    }
+  })();
+  return modelsPromise;
 }
 
 async function onStart(): Promise<void> {
-  if (!video.src && !objectUrl) {
+  if (!hasVideoFile()) {
     setStatus("请先选择视频文件");
     return;
   }
+  if (!modelsReady || !landmarker || !qwenFaceOk) {
+    setStatus("千问或 Pose 尚未就绪，请稍候");
+    await preloadModels();
+    if (!modelsReady || !landmarker || !qwenFaceOk) return;
+  }
+  if (!videoReady || video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+    setStatus("视频尚未加载完成，请稍候");
+    showLoadOverlay("正在加载视频…", fileNameEl.textContent || "请稍候");
+    return;
+  }
   btnStart.disabled = true;
-  setStatus("加载 Pose 模型…");
   try {
-    await checkHealth();
-    landmarker = await createPoseLandmarker({
-      numPoses: 6,
-      runningMode: "IMAGE",
-      modelAssetPath: FULL_MODEL_URL,
-      minPoseDetectionConfidence: 0.28,
-      minPosePresenceConfidence: 0.28,
-      minTrackingConfidence: 0.28,
-    });
-    try {
-      const faceSt = await fetchQwenFaceStatus();
-      qwenFaceOk = !!faceSt.configured;
-      if (qwenFaceOk) {
-        setApiStatus(true, `千问人脸 · ${faceSt.model ?? "qwen-vl"}`);
-      } else {
-        setApiStatus(apiOk, "千问人脸未配置 · 仅位置绑座");
-      }
-    } catch {
-      qwenFaceOk = false;
-    }
     tracker = new PoseTracker({
       matchDistance: TRACK_MATCH_DISTANCE,
       matchYWeight: TRACK_MATCH_Y_WEIGHT,
@@ -762,58 +937,78 @@ async function onStart(): Promise<void> {
     canvasSized = false;
     detecting = true;
     btnStop.disabled = false;
-    btnPause.disabled = false;
-    btnReset.disabled = false;
-    btnRelock.disabled = false;
+    setRaiseButtonsEnabled(false);
+    cancelAnimationFrame(raf);
+    raf = 0;
+
+    const numbered = await awaitInitialNumbering({ rewind: true });
+    if (!detecting) return;
+    if (!numbered) {
+      detecting = false;
+      video.pause();
+      btnStop.disabled = true;
+      setRaiseButtonsEnabled(false);
+      syncStartEnabled();
+      return;
+    }
+
+    video.currentTime = 0;
+    await waitSeeked();
     await video.play();
     btnPause.textContent = "暂停视频";
-    setStatus(
-      qwenFaceOk
-        ? `检测中 · 等待 ${readExpectedCount()} 人（千问人脸绑座）`
-        : `检测中 · 等待 ${readExpectedCount()} 人 · 未配置千问，仅位置绑座`,
-    );
+    setRaiseButtonsEnabled(true);
+    setStatus(`编号已确认 ${readExpectedCount()} 人（左→右）· 举手检测已开始`);
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame((t) => void loop(t));
   } catch (err) {
     console.error(err);
-    setStatus(err instanceof Error ? err.message : "启动失败");
+    numberingPhase = false;
     detecting = false;
-    btnStart.disabled = false;
-    landmarker?.close();
-    landmarker = null;
+    setStatus(err instanceof Error ? err.message : "启动失败");
+    syncStartEnabled();
   }
 }
 
-function stopDetection(opts?: { keepFile?: boolean }): void {
+function stopDetection(opts?: { keepFile?: boolean; keepModels?: boolean }): void {
   cancelAnimationFrame(raf);
   raf = 0;
   detecting = false;
+  numberingPhase = false;
   video.pause();
-  landmarker?.close();
-  landmarker = null;
-  qwenFaceOk = false;
+  if (!opts?.keepModels) {
+    landmarker?.close();
+    landmarker = null;
+    modelsReady = false;
+    modelsPromise = null;
+    qwenFaceOk = false;
+  }
   tracker.reset();
   clearNumberingLock();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   renderHud(0, [], null, false);
-  btnStart.disabled = !(objectUrl || video.src);
   btnStop.disabled = true;
   btnPause.disabled = true;
   btnReset.disabled = true;
   btnRelock.disabled = true;
   btnPause.textContent = "暂停视频";
   if (!opts?.keepFile) {
-    /* file kept by default when stopping detect */
+    videoReady = false;
   }
-  setStatus(objectUrl ? "已停止检测 · 可再次「开始检测」或换文件" : "已停止");
+  syncStartEnabled();
+  if (modelsReady && hasVideoFile() && videoReady) {
+    hideLoadOverlay();
+    setStatus("已停止检测 · 加载已完成，可再次「开始检测」");
+  } else {
+    refreshIdlePrompt();
+  }
 }
 
 function onStop(): void {
-  stopDetection({ keepFile: true });
+  stopDetection({ keepFile: true, keepModels: true });
 }
 
 function onTogglePause(): void {
-  if (!detecting) return;
+  if (!detecting || numberingPhase || !countLock.locked) return;
   if (video.paused) {
     void video.play().then(() => {
       btnPause.textContent = "暂停视频";
@@ -827,6 +1022,7 @@ function onTogglePause(): void {
 }
 
 function onResetRound(): void {
+  if (!countLock.locked || numberingPhase) return;
   race.reset();
   lastUiKey = "";
   renderWinner(null);
@@ -835,9 +1031,29 @@ function onResetRound(): void {
 }
 
 function onRelock(): void {
-  clearNumberingLock();
-  tracker.reset();
-  setStatus(`已解除编号 · 等待 ${readExpectedCount()} 人出镜后重新排序`);
+  if (!detecting || numberingPhase) return;
+  void (async () => {
+    cancelAnimationFrame(raf);
+    raf = 0;
+    clearNumberingLock();
+    tracker.reset();
+    const ok = await awaitInitialNumbering({ rewind: false });
+    if (!detecting) return;
+    if (!ok) {
+      detecting = false;
+      video.pause();
+      btnStop.disabled = true;
+      setRaiseButtonsEnabled(false);
+      syncStartEnabled();
+      return;
+    }
+    await video.play();
+    btnPause.textContent = "暂停视频";
+    setRaiseButtonsEnabled(true);
+    setStatus(`编号已重新确认 ${readExpectedCount()} 人（左→右）· 举手检测已开始`);
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame((t) => void loop(t));
+  })();
 }
 
 inputVideo.addEventListener("change", onFileSelected);
@@ -857,15 +1073,54 @@ seekEl.addEventListener("input", () => {
 });
 seekEl.addEventListener("change", () => {
   seeking = false;
+  updateTimeUi();
+  if (!detecting) return;
   tracker.reset();
-  clearNumberingLock();
-  setStatus(`已跳转至 ${formatTime(video.currentTime)} · 编号已清除，将重新锁定`);
+  void (async () => {
+    cancelAnimationFrame(raf);
+    raf = 0;
+    clearNumberingLock();
+    const ok = await awaitInitialNumbering({ rewind: false });
+    if (!detecting) return;
+    if (!ok) {
+      detecting = false;
+      video.pause();
+      btnStop.disabled = true;
+      setRaiseButtonsEnabled(false);
+      syncStartEnabled();
+      return;
+    }
+    await video.play();
+    btnPause.textContent = "暂停视频";
+    setRaiseButtonsEnabled(true);
+    setStatus(`编号已确认 ${readExpectedCount()} 人（左→右）· 举手检测已开始`);
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame((t) => void loop(t));
+  })();
 });
 
 video.addEventListener("loadedmetadata", () => {
   seekEl.max = String(video.duration || 0);
   updateTimeUi();
   canvasSized = false;
+});
+video.addEventListener("canplay", () => {
+  if (!hasVideoFile()) return;
+  videoReady = true;
+  refreshIdlePrompt();
+});
+video.addEventListener("loadeddata", () => {
+  if (!hasVideoFile()) return;
+  if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+    videoReady = true;
+    refreshIdlePrompt();
+  }
+});
+video.addEventListener("error", () => {
+  videoReady = false;
+  btnStart.disabled = true;
+  showLoadOverlay("视频加载失败", "请换一个文件再试", true);
+  setStatus("视频加载失败 · 请重新选择文件");
 });
 video.addEventListener("timeupdate", updateTimeUi);
 video.addEventListener("ended", () => {
@@ -881,3 +1136,4 @@ void checkHealth();
 window.setInterval(() => {
   if (!apiOk) void checkHealth();
 }, 2000);
+void preloadModels();

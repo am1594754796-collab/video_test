@@ -11,28 +11,27 @@ import {
   countSlotsWithFace,
   createCountLockState,
   createPoseLandmarker,
-  collapseByMinGapX,
-  dedupeRowPoses,
-  detectPosesForVideo,
   FirstRaiseTracker,
   FULL_MODEL_URL,
   indexByTrackIdFromSlots,
   isHandRaised,
+  numberFacesLeftToRight,
   observePersonCount,
   PoseTracker,
   rebindSlotsToTracks,
-  selectPosesBySeatBins,
-  shouldRefreshCloudFaces,
+  runQwenMpCascade,
+  shouldPollVisionFaces,
   slotsFromSort,
   startCamera,
-  torsoCenter,
   unlockCountLock,
   type CameraHandle,
   type CountLockSnapshot,
   type FaceBox,
   type FaceDescriptor,
   type FirstRaiseEvent,
+  type NumberedFace,
   type NumberingSlot,
+  type PersonBox,
   type TrackedPose,
 } from "../vision";
 import { POSE } from "../vision/detect/isHandRaised";
@@ -42,8 +41,8 @@ import { detectFacesViaQwen, fetchQwenFaceStatus } from "./qwenFaceDetect";
 const DETECT_INTERVAL_MS = 50;
 /** Qwen-VL: lock capture once; afterwards only if a seat is missing, at most every 1s. */
 const FACE_DETECT_INTERVAL_MS = 1000;
-/** Consecutive frames at expected count before one-shot Python sort. */
-const LOCK_STABLE_FRAMES = 8;
+/** Consecutive Qwen snapshots at expected count before lock. */
+const LOCK_STABLE_FRAMES = 1;
 /** How far (normalized) a returning person can be from their locked seat to reclaim the number. */
 const REBIND_MAX_DISTANCE = 0.35;
 const MIN_FACE_SIMILARITY = 0.82;
@@ -51,6 +50,9 @@ const MIN_FACE_SIMILARITY = 0.82;
 const TRACK_MATCH_DISTANCE = 0.12;
 const TRACK_MATCH_Y_WEIGHT = 0.35;
 const TRACK_MAX_MISSED = 8; // drop ghosts faster in crowded scenes
+
+const frameCanvas = document.createElement("canvas");
+const cropCanvas = document.createElement("canvas");
 
 type PersonPoint = { id: number; x: number; y: number };
 
@@ -82,7 +84,6 @@ const btnReset = document.querySelector<HTMLButtonElement>("#btn-reset")!;
 const btnRelock = document.querySelector<HTMLButtonElement>("#btn-relock")!;
 const inputExpected = document.querySelector<HTMLInputElement>("#input-expected")!;
 
-const SORT_URL = "/api/people/sort";
 const HEALTH_URL = "/api/health";
 
 let camera: CameraHandle | null = null;
@@ -94,6 +95,8 @@ let lastTs = 0;
 let lastFaceTs = 0;
 let lastFaceByTrack = new Map<number, FaceDescriptor>();
 let lastFaceBoxes: FaceBox[] = [];
+let lastNumberedFaces: NumberedFace[] = [];
+let lastPersonCrops: PersonBox[] = [];
 let canvasSized = false;
 let apiOk = false;
 let tracker = new PoseTracker({
@@ -109,6 +112,7 @@ let numberingSlots: NumberingSlot[] = [];
 let indexByTrackId = new Map<number, number>();
 let lockedPeople: SortedPerson[] = [];
 let sortInFlight = false;
+let detectInFlight = false;
 let lastUiKey = "";
 let lastWinnerKey = "";
 
@@ -120,35 +124,34 @@ function headAnchor(t: TrackedPose): { x: number; y: number } {
   return { x: t.center.x, y: Math.max(0, t.center.y - 0.12) };
 }
 
-function refreshFaceDescriptors(tracked: TrackedPose[], nowMs: number, force = false): void {
+function pollQwenFaces(nowMs: number, expected: number, tracked: TrackedPose[] = []): void {
   if (!qwenFaceOk) return;
-  const missingSeat = numberingSlots.some((s) => s.trackId == null);
   if (
-    !shouldRefreshCloudFaces({
-      force,
-      missingSeat,
+    !shouldPollVisionFaces({
       nowMs,
       lastFaceTs,
       minIntervalMs: FACE_DETECT_INTERVAL_MS,
       inFlight: faceInFlight,
     })
   ) {
-    if (!missingSeat) lastFaceBoxes = [];
     return;
   }
   faceInFlight = true;
   lastFaceTs = nowMs;
-  void detectFacesViaQwen(video)
+  void detectFacesViaQwen(video, { maxFaces: expected })
     .then((faces) => {
       lastFaceBoxes = faces;
-      lastFaceByTrack = assignFaceDescriptorsToTracks(
-        video,
-        tracked.map((t) => {
-          const h = headAnchor(t);
-          return { trackId: t.trackId, x: h.x, y: h.y };
-        }),
-        faces,
-      );
+      lastNumberedFaces = numberFacesLeftToRight(faces, expected);
+      if (tracked.length) {
+        lastFaceByTrack = assignFaceDescriptorsToTracks(
+          video,
+          tracked.map((t) => {
+            const h = headAnchor(t);
+            return { trackId: t.trackId, x: h.x, y: h.y };
+          }),
+          faces,
+        );
+      }
     })
     .catch((err) => {
       console.warn("[face/qwen]", err);
@@ -226,16 +229,6 @@ async function checkHealth(): Promise<boolean> {
   }
 }
 
-async function sortViaPython(people: PersonPoint[]): Promise<SortResponse> {
-  const res = await fetch(SORT_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ people, max_people: 6 }),
-  });
-  if (!res.ok) throw new Error(`sort HTTP ${res.status}`);
-  return (await res.json()) as SortResponse;
-}
-
 function sortLocal(people: PersonPoint[]): SortResponse {
   const sorted = [...people].sort((a, b) => a.x - b.x).slice(0, 6);
   return {
@@ -280,9 +273,7 @@ async function lockNumbering(payload: PersonPoint[], tracked: TrackedPose[]): Pr
   if (sortInFlight) return;
   sortInFlight = true;
   try {
-    if (!apiOk) await checkHealth();
-    const sorted = apiOk ? await sortViaPython(payload) : sortLocal(payload);
-    if (apiOk) setApiStatus(true, "编号已锁定");
+    const sorted = sortLocal(payload);
     applyLockFromSort(sorted);
     const faceBound = await captureFaceTemplates(tracked);
     race = new FirstRaiseTracker();
@@ -297,26 +288,9 @@ async function lockNumbering(payload: PersonPoint[], tracked: TrackedPose[]): Pr
       seats: sorted.people.map((p) => p.index),
       source: "people-fast",
     });
+    setApiStatus(true, "千问左→右编号已锁定");
     setStatus(
-      `已锁定 ${sorted.count} 人编号 · 千问人脸绑座 ${faceBound}/${sorted.count} · 开始举手检测`,
-    );
-  } catch {
-    setApiStatus(false, "排序失败，已用本地锁定");
-    const local = sortLocal(payload);
-    applyLockFromSort(local);
-    const faceBound = await captureFaceTemplates(tracked);
-    race = new FirstRaiseTracker();
-    race.update(
-      local.people.map((p) => ({ personIndex: p.index, raised: false })),
-      performance.now(),
-    );
-    publishClassroomEvent({
-      type: "numbering-locked",
-      seats: local.people.map((p) => p.index),
-      source: "people-fast",
-    });
-    setStatus(
-      `本地锁定 ${payload.length} 人编号 · 千问人脸绑座 ${faceBound}/${payload.length} · 开始举手检测`,
+      `已锁定 ${sorted.count} 人（左→右）· 千问人脸 ${faceBound}/${sorted.count} · 开始举手检测`,
     );
   } finally {
     sortInFlight = false;
@@ -411,17 +385,38 @@ function drawOverlay(
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
+  if (lastPersonCrops.length) {
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(240, 180, 41, 0.8)";
+    ctx.font = "12px Segoe UI, sans-serif";
+    ctx.fillStyle = "rgba(240, 180, 41, 0.95)";
+    for (const b of lastPersonCrops) {
+      ctx.strokeRect(b.xMin * w, b.yMin * h, (b.xMax - b.xMin) * w, (b.yMax - b.yMin) * h);
+      ctx.fillText("放大", b.xMin * w + 4, Math.max(14, b.yMin * h - 4));
+    }
+    ctx.restore();
+  }
+
+  const faces = lastNumberedFaces.length ? lastNumberedFaces : lastFaceBoxes;
+  for (const f of faces) {
+    ctx.strokeStyle = "rgba(61, 156, 253, 0.85)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(f.xMin * w, f.yMin * h, f.width * w, f.height * h);
+    if (f.index != null) {
+      ctx.fillStyle = "rgba(61, 156, 253, 0.95)";
+      ctx.font = "bold 16px Segoe UI, sans-serif";
+      ctx.fillText(`#${f.index}`, f.xMin * w + 4, Math.max(16, f.yMin * h - 6));
+    }
+  }
+
   if (locked) {
     for (const slot of numberingSlots) {
       if (slot.trackId != null) continue;
       ctx.fillStyle = "rgba(139, 152, 165, 0.85)";
       ctx.font = "bold 24px Segoe UI, sans-serif";
       ctx.fillText(`#${slot.index}?`, slot.x * w - 18, slot.y * h - 16);
-    }
-    for (const f of lastFaceBoxes) {
-      ctx.strokeStyle = "rgba(61, 156, 253, 0.55)";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(f.xMin * w, f.yMin * h, f.width * w, f.height * h);
     }
   }
 
@@ -461,6 +456,8 @@ function clearNumberingLock(): void {
   lockedPeople = [];
   lastFaceByTrack = new Map();
   lastFaceBoxes = [];
+  lastNumberedFaces = [];
+  lastPersonCrops = [];
   race = new FirstRaiseTracker();
   lastUiKey = "";
   renderWinner(null);
@@ -473,28 +470,28 @@ async function loop(nowMs: number): Promise<void> {
   if (!ensureCanvasSize()) return;
   if (nowMs - lastTs < DETECT_INTERVAL_MS) return;
   lastTs = nowMs;
+  if (detectInFlight) return;
+  detectInFlight = true;
+  try {
 
-  const raw = detectPosesForVideo(landmarker, video, nowMs);
   const expected = readExpectedCount();
-  const poses = countLock.locked
-    ? collapseByMinGapX(
-        dedupeRowPoses(raw, { duplicateDistance: 0.032, minSeparationX: 0.035 }),
-        0.034,
-      )
-    : selectPosesBySeatBins(raw, {
-        expectedCount: expected,
-        duplicateDistance: 0.032,
-        minSeparationX: 0.035,
-        minSeatGap: 0.036,
-      });
+  const cascade = runQwenMpCascade({
+    landmarker,
+    frameCanvas,
+    cropCanvas,
+    source: video,
+    faces: lastFaceBoxes,
+  });
+  lastPersonCrops = cascade.boxes;
+  const poses = cascade.poses;
   const trackedAll = tracker.update(poses);
   const fresh = trackedAll.filter((t) => t.fresh);
   const tracked = countLock.locked
     ? trackedAll
     : (fresh.length >= expected ? fresh : trackedAll).slice(0, expected);
 
+  pollQwenFaces(nowMs, expected, tracked);
   if (countLock.locked) {
-    refreshFaceDescriptors(tracked, nowMs);
     syncSlotsWithTracks(tracked);
   }
 
@@ -515,10 +512,10 @@ async function loop(nowMs: number): Promise<void> {
     );
   }
 
-  const payload = tracked.map((t) => ({
-    id: t.trackId,
-    x: torsoCenter(t.landmarks).x,
-    y: torsoCenter(t.landmarks).y,
+  const payload = lastNumberedFaces.map((f) => ({
+    id: f.index,
+    x: f.cx,
+    y: f.cy,
   }));
   const liveCount = payload.length;
 
@@ -532,14 +529,18 @@ async function loop(nowMs: number): Promise<void> {
     drawOverlay(tracked, [], null, false);
 
     if (observed.shouldLock) {
-      setStatus(`人数已达 ${expected} · 正在 Python 排序锁定…`);
+      setStatus(`千问已编号 ${expected} 人 · 正在锁定…`);
       await lockNumbering(payload, tracked);
     } else if (liveCount === expected) {
-      setStatus(
-        `人数 ${liveCount}/${expected} · 稳定中 ${countLock.streak}/${LOCK_STABLE_FRAMES} 帧后锁定编号`,
-      );
+      setStatus(`千问已编号 ${liveCount}/${expected} · 单人放大 Pose ${poses.length} · 正在锁定…`);
+    } else if (faceInFlight && liveCount === 0) {
+      setStatus(`千问正在识别人脸并编号（需要 ${expected} 人）…`);
     } else {
-      setStatus(`等待出镜人数达到 ${expected}（当前 ${liveCount}）· 暂不排序`);
+      setStatus(
+        `千问编号 ${liveCount}/${expected} · 单人放大 Pose ${poses.length}${
+          faceInFlight ? " · 识别中" : ""
+        }`,
+      );
     }
     return;
   }
@@ -569,32 +570,39 @@ async function loop(nowMs: number): Promise<void> {
   } else {
     setStatus(`举手中：${raisedIndexes.map((n) => `#${n}`).join("、")}`);
   }
+  } finally {
+    detectInFlight = false;
+  }
 }
 
 async function onStart(): Promise<void> {
   btnStart.disabled = true;
-  setStatus("加载 Pose 模型…");
+  setStatus("连接千问并加载 Pose…");
   try {
     await checkHealth();
-    landmarker = await createPoseLandmarker({
-      numPoses: 6,
-      modelAssetPath: FULL_MODEL_URL,
-      minPoseDetectionConfidence: 0.3,
-      minPosePresenceConfidence: 0.3,
-      minTrackingConfidence: 0.3,
-    });
     try {
       const faceSt = await fetchQwenFaceStatus();
       qwenFaceOk = !!faceSt.configured;
       if (qwenFaceOk) {
-        setApiStatus(true, `千问人脸 · ${faceSt.model ?? "qwen-vl"}`);
+        setApiStatus(true, `千问编号 · ${faceSt.model ?? "qwen-vl"}`);
       } else {
-        setApiStatus(apiOk, "千问人脸未配置 · 仅位置绑座");
+        setApiStatus(apiOk, "千问未配置 · 请在 python/data/api.env 填写 LLM_API_KEY");
       }
     } catch {
       qwenFaceOk = false;
-      setApiStatus(apiOk, "千问人脸状态不可用 · 仅位置绑座");
+      setApiStatus(apiOk, "无法读取千问状态 · 请先启动 python/server.py");
     }
+    if (!qwenFaceOk) {
+      throw new Error("千问未就绪：请启动 Python API 并填写 LLM_API_KEY");
+    }
+    landmarker = await createPoseLandmarker({
+      numPoses: 1,
+      runningMode: "IMAGE",
+      modelAssetPath: FULL_MODEL_URL,
+      minPoseDetectionConfidence: 0.35,
+      minPosePresenceConfidence: 0.35,
+      minTrackingConfidence: 0.35,
+    });
     camera = await startCamera(video);
     tracker = new PoseTracker({
       matchDistance: TRACK_MATCH_DISTANCE,
@@ -609,11 +617,7 @@ async function onStart(): Promise<void> {
     btnStop.disabled = false;
     btnReset.disabled = false;
     btnRelock.disabled = false;
-    setStatus(
-      qwenFaceOk
-        ? `运行中 · 等待 ${readExpectedCount()} 人出镜后锁定（千问人脸绑座）`
-        : `运行中 · 等待 ${readExpectedCount()} 人 · 未配置千问，仅位置找回编号`,
-    );
+    setStatus(`运行中 · 千问人脸编号 · 单人放大 Pose · 等待 ${readExpectedCount()} 人`);
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame((t) => void loop(t));
   } catch (err) {
@@ -653,7 +657,7 @@ function onResetRound(): void {
 
 function onRelock(): void {
   clearNumberingLock();
-  setStatus(`已解除编号 · 等待 ${readExpectedCount()} 人出镜后重新排序`);
+  setStatus(`已解除编号 · 等待千问重新识别 ${readExpectedCount()} 人`);
 }
 
 btnStart.addEventListener("click", () => void onStart());

@@ -16,3 +16,6 @@ python/data/api.env
 public/mediapipe/models/*.task
 public/mediapipe/models/*.part
 public/mediapipe/wasm/
+# YOLO + ONNX Runtime wasm (downloaded locally)
+public/yolo/*.onnx
+public/ort/

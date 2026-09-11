@@ -37,7 +37,9 @@ export {
   cosineSimilarity,
   pickFaceForPerson,
   assignFaceDescriptorsToTracks,
+  matchFacesToIds,
   type FaceDescriptor,
+  type MatchedFace,
 } from "./detect/faceDescriptor";
 export {
   createPoseLandmarker,
@@ -58,6 +60,35 @@ export {
   type SeatCropOptions,
 } from "./detect/poseLandmarker";
 export {
+  boxCenter,
+  isolateRowCrops,
+  selectPersonRow,
+  expandFaceToPersonCrop,
+  personBoxesFromFaces,
+  personBoxFromSeat,
+  type PersonBox,
+} from "./detect/personBox";
+export { BoxTracker, type TrackedBox } from "./detect/boxTracker";
+export {
+  detectPoseInPersonBox,
+  detectPosesFromPersonBoxes,
+  mapLandmarksFromCrop,
+  type CascadePose,
+} from "./detect/cascadePose";
+export {
+  runQwenMpCascade,
+  runMpOnPersonBoxes,
+  personBoxesFromNumberedSeats,
+  type QwenMpResult,
+} from "./detect/qwenMpCascade";
+export {
+  numberFacesLeftToRight,
+  followLockedFaces,
+  nudgeLockedFacesTowardHeads,
+  shouldPollVisionFaces,
+  type NumberedFace,
+} from "./detect/qwenNumbering";
+export {
   dedupeRowPoses,
   collapseByMinGapX,
   selectPosesBySeatBins,
@@ -66,6 +97,7 @@ export {
 export {
   createSeatAnchors,
   matchDetectionsToSeats,
+  bindPosesToSeatsByIndex,
   seatsToNumberingSlots,
   type SeatAnchor,
   type SeatDetection,

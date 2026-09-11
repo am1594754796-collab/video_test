@@ -13,4 +13,6 @@ export type FaceBox = {
   width: number;
   height: number;
   score: number;
+  /** 1-based left→right index when assigned by Qwen numbering. */
+  index?: number;
 };

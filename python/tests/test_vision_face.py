@@ -8,6 +8,30 @@ def test_parse_faces_json():
     )
     assert len(faces) == 2
     assert faces[0]["cx"] < faces[1]["cx"]
+    assert faces[0]["index"] == 1
+    assert faces[1]["index"] == 2
+
+
+def test_parse_faces_ignores_model_index_and_sorts_left_to_right():
+    faces = parse_faces_response(
+        '{"faces":[{"index":1,"x_min":0.7,"y_min":0.1,"width":0.15,"height":0.2},'
+        '{"index":2,"x_min":0.1,"y_min":0.1,"width":0.15,"height":0.2}]}'
+    )
+    assert faces[0]["index"] == 1
+    assert faces[0]["x_min"] == 0.1
+    assert faces[1]["index"] == 2
+    assert faces[1]["x_min"] == 0.7
+
+
+def test_parse_faces_percent_coords_still_left_to_right():
+    faces = parse_faces_response(
+        '{"faces":[{"x_min":62,"y_min":12,"width":18,"height":22},'
+        '{"x_min":10,"y_min":12,"width":18,"height":22}]}'
+    )
+    assert len(faces) == 2
+    assert faces[0]["index"] == 1
+    assert faces[0]["cx"] < faces[1]["cx"]
+    assert abs(faces[0]["x_min"] - 0.10) < 1e-6
 
 
 def test_parse_faces_xyxy():

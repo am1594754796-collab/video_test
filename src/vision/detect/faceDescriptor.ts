@@ -137,3 +137,77 @@ export function assignFaceDescriptorsToTracks(
   }
   return out;
 }
+
+export type HeadWithTemplate = PersonHead & {
+  template?: FaceDescriptor | null;
+};
+
+export type MatchedFace = {
+  face: FaceBox;
+  descriptor: FaceDescriptor;
+};
+
+/**
+ * Bind live Qwen faces to stable ids.
+ * Prefer stored face templates; fall back to head position.
+ */
+export function matchFacesToIds(
+  video: HTMLVideoElement,
+  people: readonly HeadWithTemplate[],
+  faces: readonly FaceBox[],
+  options: { maxDistance?: number; minFaceSimilarity?: number } = {},
+): Map<number, MatchedFace> {
+  const maxDistance = options.maxDistance ?? 0.28;
+  const minFaceSimilarity = options.minFaceSimilarity ?? 0.82;
+  const live: Array<{ fi: number; desc: FaceDescriptor | null }> = faces.map((f, fi) => ({
+    fi,
+    desc: extractFaceDescriptor(video, f),
+  }));
+
+  const usedPeople = new Set<number>();
+  const usedFaces = new Set<number>();
+  const out = new Map<number, MatchedFace>();
+
+  type SimPair = { trackId: number; fi: number; sim: number };
+  const sims: SimPair[] = [];
+  for (const p of people) {
+    if (!p.template?.length) continue;
+    for (const { fi, desc } of live) {
+      if (!desc) continue;
+      const sim = cosineSimilarity(p.template, desc);
+      if (sim >= minFaceSimilarity) sims.push({ trackId: p.trackId, fi, sim });
+    }
+  }
+  sims.sort((a, b) => b.sim - a.sim);
+  for (const { trackId, fi } of sims) {
+    if (usedPeople.has(trackId) || usedFaces.has(fi)) continue;
+    const desc = live[fi]!.desc;
+    if (!desc) continue;
+    out.set(trackId, { face: faces[fi]!, descriptor: desc });
+    usedPeople.add(trackId);
+    usedFaces.add(fi);
+  }
+
+  type DistPair = { trackId: number; fi: number; d: number };
+  const dists: DistPair[] = [];
+  for (const p of people) {
+    if (usedPeople.has(p.trackId)) continue;
+    for (let fi = 0; fi < faces.length; fi++) {
+      if (usedFaces.has(fi)) continue;
+      const f = faces[fi]!;
+      if (f.cy > p.y + 0.12) continue;
+      const d = Math.hypot(f.cx - p.x, f.cy - p.y);
+      if (d <= maxDistance) dists.push({ trackId: p.trackId, fi, d });
+    }
+  }
+  dists.sort((a, b) => a.d - b.d);
+  for (const { trackId, fi } of dists) {
+    if (usedPeople.has(trackId) || usedFaces.has(fi)) continue;
+    const desc = live[fi]!.desc ?? extractFaceDescriptor(video, faces[fi]!);
+    if (!desc) continue;
+    out.set(trackId, { face: faces[fi]!, descriptor: desc });
+    usedPeople.add(trackId);
+    usedFaces.add(fi);
+  }
+  return out;
+}

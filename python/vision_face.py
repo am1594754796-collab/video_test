@@ -65,18 +65,38 @@ def _clamp01(v: float) -> float:
     return max(0.0, min(1.0, v))
 
 
+def _as_unit(vals: list[float]) -> list[float]:
+    """Map Qwen coords to [0,1]. VL often returns 0–1, 0–100, or pixel-ish values."""
+    peak = max((abs(v) for v in vals), default=0.0)
+    if peak <= 1.5:
+        scale = 1.0
+    elif peak <= 100.0:
+        scale = 100.0
+    else:
+        scale = 960.0
+    return [_clamp01(v / scale) for v in vals]
+
+
 def _normalize_face(raw: dict[str, Any]) -> dict[str, float] | None:
     try:
         if all(k in raw for k in ("x_min", "y_min", "width", "height")):
-            x_min = _clamp01(float(raw["x_min"]))
-            y_min = _clamp01(float(raw["y_min"]))
-            width = _clamp01(float(raw["width"]))
-            height = _clamp01(float(raw["height"]))
+            x_min, y_min, width, height = _as_unit(
+                [
+                    float(raw["x_min"]),
+                    float(raw["y_min"]),
+                    float(raw["width"]),
+                    float(raw["height"]),
+                ]
+            )
         elif all(k in raw for k in ("x1", "y1", "x2", "y2")):
-            x1 = _clamp01(float(raw["x1"]))
-            y1 = _clamp01(float(raw["y1"]))
-            x2 = _clamp01(float(raw["x2"]))
-            y2 = _clamp01(float(raw["y2"]))
+            x1, y1, x2, y2 = _as_unit(
+                [
+                    float(raw["x1"]),
+                    float(raw["y1"]),
+                    float(raw["x2"]),
+                    float(raw["y2"]),
+                ]
+            )
             x_min, y_min = min(x1, x2), min(y1, y2)
             width, height = abs(x2 - x1), abs(y2 - y1)
         else:
@@ -132,8 +152,13 @@ def _parse_faces(text: str) -> list[dict[str, float]]:
         face = _normalize_face(item)
         if face:
             out.append(face)
-    out.sort(key=lambda f: f["cx"])
-    return out
+    out.sort(key=lambda f: (f["cx"], f["cy"]))
+    numbered: list[dict[str, float]] = []
+    for i, face in enumerate(out, start=1):
+        item = dict(face)
+        item["index"] = i
+        numbered.append(item)
+    return numbered
 
 
 def parse_faces_response(text: str) -> list[dict[str, float]]:
@@ -161,12 +186,14 @@ def detect_faces_qwen(
             mime = parts[0].split(";")[0].replace("data:", "") or mime
 
     prompt = (
-        "这是教室摄像头画面。请检测画面中每一个可见的人脸。"
-        f"最多返回 {max_faces} 张脸。"
-        "坐标用相对整图的归一化比例（0到1）。"
-        "只输出一行 JSON，不要其它文字，格式："
-        '{"faces":[{"x_min":0.1,"y_min":0.1,"width":0.15,"height":0.2,"score":0.95},...]}。'
-        "按人脸中心从左到右排序。若无人脸则返回 {\"faces\":[]}。"
+        "这是教室画面（未镜像）。请检测每一个可见学生的人脸。"
+        "编号规则（必须遵守）：按人脸中心的水平位置从左到右，"
+        "画面最左边的人是 1 号，然后 2、3… 不要按远近、高低或返回顺序编号。"
+        f"最多 {max_faces} 张脸。"
+        "坐标必须是相对整图的 0 到 1（x=0 在画面左边缘，x=1 在右边缘）。"
+        "只输出一行 JSON，不要其它文字："
+        '{"faces":[{"x_min":0.1,"y_min":0.1,"width":0.12,"height":0.16,"score":0.95},...]}。'
+        "faces 数组也请从左到右排列。若无人脸则 {\"faces\":[]}。"
     )
 
     url = f"{cfg['base_url']}/chat/completions"

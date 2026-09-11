@@ -11,7 +11,7 @@
       <header>
         <h1>人物编号 · 视频回放检测</h1>
         <p class="sub">
-          选择本地视频 → 开始检测：左→右编号、人脸绑座、举手 / 最先举手（逻辑同快版，不用相机）
+          选择本地视频 → 先千问人脸左→右编号并锁定 → 确认后才开始举手检测
           · <a href="/people-fast.html">相机快版</a>
           · <a href="/scoreboard.html">计分板</a>
         </p>
@@ -53,11 +53,16 @@
         <ol id="number-list" class="number-list"></ol>
       </section>
 
-      <p id="status" class="status" role="status">请选择本地视频文件，再点「开始检测」</p>
+      <p id="status" class="status" role="status">正在加载检测模型，完成后才能开始检测</p>
 
       <div class="stage">
         <video id="video" playsinline muted></video>
         <canvas id="overlay"></canvas>
+        <div id="load-overlay" class="load-overlay" role="status" aria-live="polite">
+          <div class="load-spinner" aria-hidden="true"></div>
+          <p id="load-title" class="load-title">正在加载检测模型…</p>
+          <p id="load-detail" class="load-detail">请稍候，加载完成前不能开始检测</p>
+        </div>
       </div>
     </main>
     <script type="module" src="/src/app/people-board-video.ts"></script>

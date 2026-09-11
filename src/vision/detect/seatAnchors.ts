@@ -1,11 +1,12 @@
 /**
  * After numbering lock, identity is the seat index — not MediaPipe trackId.
- * Each frame we only re-associate detections to fixed seats by position (and optional face).
+ * Each frame we re-associate detections to fixed seats by face (preferred) then position.
  */
 
+import { cosineSimilarity, type FaceDescriptor } from "./faceDescriptor";
 import type { PoseLandmark } from "./isHandRaised";
 import { RaiseDebouncer } from "./raiseDebouncer";
-import type { FaceDescriptor, NumberingSlot } from "./numberingSlots";
+import type { NumberingSlot } from "./numberingSlots";
 
 export type SeatDetection = {
   x: number;
@@ -34,6 +35,8 @@ export type SeatMatchOptions = {
   /** Frames a seat may miss before landmarks clear. */
   maxMissed?: number;
   minFrames?: number;
+  /** Min cosine similarity to claim a seat by face before position. */
+  minFaceSimilarity?: number;
 };
 
 function dist(
@@ -63,8 +66,20 @@ export function createSeatAnchors(
     .sort((a, b) => a.index - b.index);
 }
 
+function bindDetToSeat(seat: SeatAnchor, det: SeatDetection): void {
+  seat.x = det.x;
+  seat.y = det.y;
+  seat.landmarks = det.landmarks;
+  seat.missed = 0;
+  seat.fresh = true;
+  if (det.faceDescriptor && det.faceDescriptor.length) {
+    seat.faceDescriptor = det.faceDescriptor;
+  }
+}
+
 /**
- * Greedy seat↔detection match by position. Seat `index` never changes.
+ * Greedy seat↔detection match. Seat `index` never changes.
+ * Face templates win over position when both sides have descriptors.
  */
 export function matchDetectionsToSeats(
   anchors: readonly SeatAnchor[],
@@ -74,6 +89,7 @@ export function matchDetectionsToSeats(
   const maxDistance = options.maxDistance ?? 0.2;
   const yWeight = options.yWeight ?? 0.4;
   const maxMissed = options.maxMissed ?? 12;
+  const minFaceSimilarity = options.minFaceSimilarity ?? 0.82;
 
   const next = anchors.map((a) => ({
     ...a,
@@ -82,35 +98,48 @@ export function matchDetectionsToSeats(
     debouncer: a.debouncer,
   }));
 
+  const usedSeat = new Set<number>();
+  const usedDet = new Set<number>();
+
+  type FacePair = { si: number; di: number; sim: number };
+  const facePairs: FacePair[] = [];
+  for (let si = 0; si < next.length; si++) {
+    const template = next[si]!.faceDescriptor;
+    if (!template?.length) continue;
+    for (let di = 0; di < detections.length; di++) {
+      const live = detections[di]!.faceDescriptor;
+      if (!live?.length) continue;
+      const sim = cosineSimilarity(template, live);
+      if (sim >= minFaceSimilarity) facePairs.push({ si, di, sim });
+    }
+  }
+  facePairs.sort((a, b) => b.sim - a.sim);
+  for (const { si, di } of facePairs) {
+    if (usedSeat.has(si) || usedDet.has(di)) continue;
+    bindDetToSeat(next[si]!, detections[di]!);
+    usedSeat.add(si);
+    usedDet.add(di);
+  }
+
   type Pair = { si: number; di: number; d: number };
   const pairs: Pair[] = [];
   for (let si = 0; si < next.length; si++) {
+    if (usedSeat.has(si)) continue;
     for (let di = 0; di < detections.length; di++) {
+      if (usedDet.has(di)) continue;
       pairs.push({
         si,
         di,
-        d: dist(next[si], detections[di], yWeight),
+        d: dist(next[si]!, detections[di]!, yWeight),
       });
     }
   }
   pairs.sort((a, b) => a.d - b.d);
 
-  const usedSeat = new Set<number>();
-  const usedDet = new Set<number>();
-
   for (const { si, di, d } of pairs) {
     if (usedSeat.has(si) || usedDet.has(di)) continue;
     if (d > maxDistance) continue;
-    const det = detections[di]!;
-    const seat = next[si]!;
-    seat.x = det.x;
-    seat.y = det.y;
-    seat.landmarks = det.landmarks;
-    seat.missed = 0;
-    seat.fresh = true;
-    if (det.faceDescriptor && det.faceDescriptor.length) {
-      seat.faceDescriptor = det.faceDescriptor;
-    }
+    bindDetToSeat(next[si]!, detections[di]!);
     usedSeat.add(si);
     usedDet.add(di);
   }
@@ -126,6 +155,40 @@ export function matchDetectionsToSeats(
   }
 
   return next;
+}
+
+/**
+ * Bind Pose results to seats by Qwen index on the crop. Do not re-sort by torso x.
+ */
+export function bindPosesToSeatsByIndex(
+  anchors: readonly SeatAnchor[],
+  poses: readonly { index: number; x: number; y: number; landmarks: readonly PoseLandmark[] }[],
+  options: Pick<SeatMatchOptions, "maxMissed"> = {},
+): SeatAnchor[] {
+  const maxMissed = options.maxMissed ?? 12;
+  const byIndex = new Map<number, (typeof poses)[number]>();
+  for (const pose of poses) {
+    if (!byIndex.has(pose.index)) byIndex.set(pose.index, pose);
+  }
+
+  return anchors.map((a) => {
+    const seat = {
+      ...a,
+      fresh: false,
+      debouncer: a.debouncer,
+    };
+    const pose = byIndex.get(seat.index);
+    if (!pose) {
+      seat.missed += 1;
+      if (seat.missed > maxMissed) seat.landmarks = null;
+      return seat;
+    }
+    // Keep x/y on the locked face; pose is only for raise detection.
+    seat.landmarks = pose.landmarks;
+    seat.missed = 0;
+    seat.fresh = true;
+    return seat;
+  });
 }
 
 export function seatsToNumberingSlots(anchors: readonly SeatAnchor[]): NumberingSlot[] {
