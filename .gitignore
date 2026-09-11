@@ -12,3 +12,7 @@ python/data/online.env
 **/online.env
 python/data/api.env
 **/api.env
+# Large MediaPipe binaries (download once; see public/mediapipe/README.md)
+public/mediapipe/models/*.task
+public/mediapipe/models/*.part
+public/mediapipe/wasm/

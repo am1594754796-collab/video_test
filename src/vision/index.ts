@@ -42,9 +42,40 @@ export {
 export {
   createPoseLandmarker,
   detectPosesForVideo,
+  detectPosesMultiBand,
+  detectPoseInSeatCrop,
+  refineSeatsWithCrops,
   DEFAULT_MODEL_URL,
+  FULL_MODEL_URL,
+  HEAVY_MODEL_URL,
   DEFAULT_WASM_ROOT,
+  REMOTE_LITE_MODEL_URL,
+  REMOTE_FULL_MODEL_URL,
+  REMOTE_HEAVY_MODEL_URL,
   type PoseFrame,
   type PoseLandmarkerConfig,
+  type SeatCropHint,
+  type SeatCropOptions,
 } from "./detect/poseLandmarker";
+export {
+  dedupeRowPoses,
+  collapseByMinGapX,
+  selectPosesBySeatBins,
+  type RowSelectOptions,
+} from "./detect/rowPoseSelect";
+export {
+  createSeatAnchors,
+  matchDetectionsToSeats,
+  seatsToNumberingSlots,
+  type SeatAnchor,
+  type SeatDetection,
+} from "./detect/seatAnchors";
+export { emaBlendLandmarks } from "./detect/landmarkSmooth";
+export {
+  evaluateHandRaise,
+  shoulderMidline,
+  SeatRaiseTracker,
+  type RaiseEval,
+  type SeatRaiseUpdate,
+} from "./detect/raiseSignal";
 export { startCamera, type CameraHandle } from "./camera/startCamera";

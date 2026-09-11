@@ -11,14 +11,17 @@ import {
   countSlotsWithFace,
   createCountLockState,
   createPoseLandmarker,
-  dedupePosesByTorso,
+  collapseByMinGapX,
+  dedupeRowPoses,
   detectPosesForVideo,
   FirstRaiseTracker,
+  FULL_MODEL_URL,
   indexByTrackIdFromSlots,
   isHandRaised,
   observePersonCount,
   PoseTracker,
   rebindSlotsToTracks,
+  selectPosesBySeatBins,
   shouldRefreshCloudFaces,
   slotsFromSort,
   startCamera,
@@ -39,15 +42,15 @@ import { detectFacesViaQwen, fetchQwenFaceStatus } from "./qwenFaceDetect";
 const DETECT_INTERVAL_MS = 50;
 /** Qwen-VL: lock capture once; afterwards only if a seat is missing, at most every 1s. */
 const FACE_DETECT_INTERVAL_MS = 1000;
-const RAISE_MARGIN = 0.04;
 /** Consecutive frames at expected count before one-shot Python sort. */
 const LOCK_STABLE_FRAMES = 8;
 /** How far (normalized) a returning person can be from their locked seat to reclaim the number. */
 const REBIND_MAX_DISTANCE = 0.35;
 const MIN_FACE_SIMILARITY = 0.82;
-/** Tracker: tolerate larger motion + longer dropouts before killing a track. */
-const TRACK_MATCH_DISTANCE = 0.28;
-const TRACK_MAX_MISSED = 60; // ~3s at 20FPS
+/** Prefer horizontal seat lock; avoid stealing a neighbor track. */
+const TRACK_MATCH_DISTANCE = 0.12;
+const TRACK_MATCH_Y_WEIGHT = 0.35;
+const TRACK_MAX_MISSED = 8; // drop ghosts faster in crowded scenes
 
 type PersonPoint = { id: number; x: number; y: number };
 
@@ -95,6 +98,7 @@ let canvasSized = false;
 let apiOk = false;
 let tracker = new PoseTracker({
   matchDistance: TRACK_MATCH_DISTANCE,
+  matchYWeight: TRACK_MATCH_Y_WEIGHT,
   maxMissed: TRACK_MAX_MISSED,
   minFrames: 8,
 });
@@ -282,6 +286,10 @@ async function lockNumbering(payload: PersonPoint[], tracked: TrackedPose[]): Pr
     applyLockFromSort(sorted);
     const faceBound = await captureFaceTemplates(tracked);
     race = new FirstRaiseTracker();
+    race.update(
+      sorted.people.map((p) => ({ personIndex: p.index, raised: false })),
+      performance.now(),
+    );
     lastUiKey = "";
     lastWinnerKey = "";
     publishClassroomEvent({
@@ -298,6 +306,10 @@ async function lockNumbering(payload: PersonPoint[], tracked: TrackedPose[]): Pr
     applyLockFromSort(local);
     const faceBound = await captureFaceTemplates(tracked);
     race = new FirstRaiseTracker();
+    race.update(
+      local.people.map((p) => ({ personIndex: p.index, raised: false })),
+      performance.now(),
+    );
     publishClassroomEvent({
       type: "numbering-locked",
       seats: local.people.map((p) => p.index),
@@ -463,8 +475,23 @@ async function loop(nowMs: number): Promise<void> {
   lastTs = nowMs;
 
   const raw = detectPosesForVideo(landmarker, video, nowMs);
-  const poses = dedupePosesByTorso(raw, { minDistance: 0.12 });
-  const tracked = tracker.update(poses);
+  const expected = readExpectedCount();
+  const poses = countLock.locked
+    ? collapseByMinGapX(
+        dedupeRowPoses(raw, { duplicateDistance: 0.032, minSeparationX: 0.035 }),
+        0.034,
+      )
+    : selectPosesBySeatBins(raw, {
+        expectedCount: expected,
+        duplicateDistance: 0.032,
+        minSeparationX: 0.035,
+        minSeatGap: 0.036,
+      });
+  const trackedAll = tracker.update(poses);
+  const fresh = trackedAll.filter((t) => t.fresh);
+  const tracked = countLock.locked
+    ? trackedAll
+    : (fresh.length >= expected ? fresh : trackedAll).slice(0, expected);
 
   if (countLock.locked) {
     refreshFaceDescriptors(tracked, nowMs);
@@ -472,16 +499,20 @@ async function loop(nowMs: number): Promise<void> {
   }
 
   for (const t of tracked) {
-    if (!t.fresh) continue;
-    // Only score raises after numbering is locked and this track owns a seat.
-    if (countLock.locked && indexByTrackId.has(t.trackId)) {
-      t.debouncer.update(
-        isHandRaised(t.landmarks, {
-          margin: RAISE_MARGIN,
-          otherLandmarks: tracked.filter((o) => o.trackId !== t.trackId).map((o) => o.landmarks),
-        }),
-      );
-    }
+    if (!countLock.locked) continue;
+    if (!indexByTrackId.has(t.trackId)) continue;
+    t.debouncer.update(
+      isHandRaised(t.landmarks, {
+        margin: 0.02,
+        minVisibility: 0.32,
+        maxWristFromShoulder: 0.58,
+        maxUpperArm: 0.48,
+        maxForearm: 0.48,
+        minElbowDeg: 20,
+        maxElbowDeg: 170,
+        otherLandmarks: tracked.filter((o) => o.trackId !== t.trackId).map((o) => o.landmarks),
+      }),
+    );
   }
 
   const payload = tracked.map((t) => ({
@@ -490,7 +521,6 @@ async function loop(nowMs: number): Promise<void> {
     y: torsoCenter(t.landmarks).y,
   }));
   const liveCount = payload.length;
-  const expected = readExpectedCount();
 
   if (!countLock.locked) {
     const observed = observePersonCount(countLock, liveCount, {
@@ -548,9 +578,10 @@ async function onStart(): Promise<void> {
     await checkHealth();
     landmarker = await createPoseLandmarker({
       numPoses: 6,
-      minPoseDetectionConfidence: 0.5,
-      minPosePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.45,
+      modelAssetPath: FULL_MODEL_URL,
+      minPoseDetectionConfidence: 0.3,
+      minPosePresenceConfidence: 0.3,
+      minTrackingConfidence: 0.3,
     });
     try {
       const faceSt = await fetchQwenFaceStatus();
@@ -567,6 +598,7 @@ async function onStart(): Promise<void> {
     camera = await startCamera(video);
     tracker = new PoseTracker({
       matchDistance: TRACK_MATCH_DISTANCE,
+      matchYWeight: TRACK_MATCH_Y_WEIGHT,
       maxMissed: TRACK_MAX_MISSED,
       minFrames: 8,
     });

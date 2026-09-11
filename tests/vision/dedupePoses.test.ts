@@ -47,4 +47,15 @@ describe("dedupePosesByTorso", () => {
     expect(out).toHaveLength(1);
     expect(out[0].landmarks[POSE.LEFT_SHOULDER]?.visibility).toBe(0.95);
   });
+
+  it("keeps adjacent row seats when |Δx| >= minSeparationX", () => {
+    const out = dedupePosesByTorso(
+      [
+        { landmarks: fakePose(0.5, 0.4, 0.9) },
+        { landmarks: fakePose(0.54, 0.42, 0.85) },
+      ],
+      { minDistance: 0.12, minSeparationX: 0.035, yWeight: 0.45 },
+    );
+    expect(out).toHaveLength(2);
+  });
 });

@@ -19,6 +19,8 @@ export type TrackedPose = {
 
 export type PoseTrackerOptions = {
   matchDistance?: number;
+  /** Scale Δy in match distance (default 1). <1 prefers horizontal seat matching. */
+  matchYWeight?: number;
   maxMissed?: number;
   minFrames?: number;
 };
@@ -31,12 +33,19 @@ type InternalTrack = {
   debouncer: RaiseDebouncer;
 };
 
-function dist(a: { x: number; y: number }, b: { x: number; y: number }): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
+function dist(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  yWeight: number,
+): number {
+  const dx = a.x - b.x;
+  const dy = (a.y - b.y) * yWeight;
+  return Math.hypot(dx, dy);
 }
 
 export class PoseTracker {
   private readonly matchDistance: number;
+  private readonly matchYWeight: number;
   private readonly maxMissed: number;
   private minFrames: number;
   private nextId = 1;
@@ -44,6 +53,7 @@ export class PoseTracker {
 
   constructor(options: PoseTrackerOptions = {}) {
     this.matchDistance = options.matchDistance ?? 0.18;
+    this.matchYWeight = options.matchYWeight ?? 1;
     this.maxMissed = options.maxMissed ?? 10;
     this.minFrames = options.minFrames ?? 4;
   }
@@ -71,7 +81,11 @@ export class PoseTracker {
     const pairs: Pair[] = [];
     for (let ti = 0; ti < this.tracks.length; ti++) {
       for (let di = 0; di < detections.length; di++) {
-        pairs.push({ ti, di, d: dist(this.tracks[ti].center, detections[di].center) });
+        pairs.push({
+          ti,
+          di,
+          d: dist(this.tracks[ti].center, detections[di].center, this.matchYWeight),
+        });
       }
     }
     pairs.sort((a, b) => a.d - b.d);

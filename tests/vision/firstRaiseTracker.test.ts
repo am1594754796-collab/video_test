@@ -38,23 +38,63 @@ describe("FirstRaiseTracker", () => {
     expect(t.winner?.personIndex).toBe(1);
   });
 
-  it("same-frame rising edges: lower personIndex wins", () => {
+  it("same-frame equal times: does not prefer lower personIndex", () => {
     const t = new FirstRaiseTracker();
     t.update(
       [
-        { personIndex: 2, raised: false },
         { personIndex: 3, raised: false },
+        { personIndex: 2, raised: false },
       ],
       1000,
     );
     const win = t.update(
       [
-        { personIndex: 2, raised: true },
-        { personIndex: 3, raised: true },
+        { personIndex: 3, raised: true, score: 0, edgeAtMs: 1100 },
+        { personIndex: 2, raised: true, score: 0, edgeAtMs: 1100 },
       ],
       1100,
     );
-    expect(win?.personIndex).toBe(2);
+    // No min-index rule: stable order keeps the earlier candidate (#3).
+    expect(win?.personIndex).toBe(3);
+  });
+
+  it("same-frame rising edges: earlier edgeAtMs wins", () => {
+    const t = new FirstRaiseTracker();
+    t.update(
+      [
+        { personIndex: 2, raised: false },
+        { personIndex: 5, raised: false },
+      ],
+      1000,
+    );
+    const win = t.update(
+      [
+        { personIndex: 2, raised: true, score: 0.1, edgeAtMs: 1080 },
+        { personIndex: 5, raised: true, score: 0.05, edgeAtMs: 1040 },
+      ],
+      1100,
+    );
+    expect(win?.personIndex).toBe(5);
+    expect(win?.raisedAtMs).toBe(1040);
+  });
+
+  it("same-frame rising edges: higher score wins when edge times match", () => {
+    const t = new FirstRaiseTracker();
+    t.update(
+      [
+        { personIndex: 1, raised: false },
+        { personIndex: 4, raised: false },
+      ],
+      1000,
+    );
+    const win = t.update(
+      [
+        { personIndex: 1, raised: true, score: 0.04, edgeAtMs: 1100 },
+        { personIndex: 4, raised: true, score: 0.12, edgeAtMs: 1100 },
+      ],
+      1100,
+    );
+    expect(win?.personIndex).toBe(4);
   });
 
   it("armed=false does not produce a winner", () => {

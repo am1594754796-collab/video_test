@@ -30,6 +30,17 @@ export type HandRaiseOptions = {
   minVisibility?: number;
   /** Other people in the same frame — used so we do not claim their wrists. */
   otherLandmarks?: readonly (readonly PoseLandmark[])[];
+  /** Override geometry clamps (classroom / high raises). */
+  maxWristFromShoulder?: number;
+  maxUpperArm?: number;
+  maxForearm?: number;
+  minElbowDeg?: number;
+  maxElbowDeg?: number;
+  /**
+   * Classroom / video wave: prioritize wrist-above-shoulder; loosen elbow/segment
+   * checks so high nearly-straight raises still count.
+   */
+  classroom?: boolean;
 };
 
 export type HandsRaised = {
@@ -83,18 +94,24 @@ function ownArmGeometry(
   wrist: PoseLandmark,
   side: "left" | "right",
   oppositeShoulder: PoseLandmark | undefined,
+  limits: {
+    minSegment: number;
+    maxUpperArm: number;
+    maxForearm: number;
+    maxWristFromShoulder: number;
+  },
 ): boolean {
   const upper = hypot2(shoulder.x, shoulder.y, elbow.x, elbow.y);
   const forearm = hypot2(elbow.x, elbow.y, wrist.x, wrist.y);
   const reach = hypot2(shoulder.x, shoulder.y, wrist.x, wrist.y);
-  if (upper < DEFAULTS.minSegment || upper > DEFAULTS.maxSegment) return false;
-  if (forearm < DEFAULTS.minSegment || forearm > DEFAULTS.maxSegment) return false;
-  if (reach > DEFAULTS.maxWristFromShoulder) return false;
+  if (upper < limits.minSegment || upper > limits.maxUpperArm) return false;
+  if (forearm < limits.minSegment || forearm > limits.maxForearm) return false;
+  if (reach > limits.maxWristFromShoulder) return false;
 
   // Raised hand stays on this person's side of the torso (may cross midline a little).
   if (oppositeShoulder) {
-    if (side === "left" && wrist.x > oppositeShoulder.x + 0.1) return false;
-    if (side === "right" && wrist.x < oppositeShoulder.x - 0.1) return false;
+    if (side === "left" && wrist.x > oppositeShoulder.x + 0.12) return false;
+    if (side === "right" && wrist.x < oppositeShoulder.x - 0.12) return false;
   }
   return true;
 }
@@ -118,30 +135,74 @@ function sideRaised(
   side: "left" | "right",
   options: Required<Pick<HandRaiseOptions, "margin" | "minVisibility">> & {
     otherLandmarks: readonly (readonly PoseLandmark[])[];
+    maxWristFromShoulder: number;
+    maxUpperArm: number;
+    maxForearm: number;
+    minElbowDeg: number;
+    maxElbowDeg: number;
+    classroom: boolean;
   },
 ): boolean {
   const shoulder = landmarks[side === "left" ? POSE.LEFT_SHOULDER : POSE.RIGHT_SHOULDER];
   const elbow = landmarks[side === "left" ? POSE.LEFT_ELBOW : POSE.RIGHT_ELBOW];
   const wrist = landmarks[side === "left" ? POSE.LEFT_WRIST : POSE.RIGHT_WRIST];
   const opposite = landmarks[side === "left" ? POSE.RIGHT_SHOULDER : POSE.LEFT_SHOULDER];
-  const { margin, minVisibility, otherLandmarks } = options;
+  const { margin, minVisibility, otherLandmarks, classroom } = options;
+
+  if (!visibleEnough(shoulder, minVisibility) || !visibleEnough(wrist, minVisibility)) {
+    return false;
+  }
+
+  if (wristCloserToNeighbor(wrist, torsoCenter(landmarks), otherLandmarks)) return false;
+
+  const reach = hypot2(shoulder.x, shoulder.y, wrist.x, wrist.y);
+  if (reach > options.maxWristFromShoulder) return false;
+
+  if (classroom) {
+    // Use mid-shoulder baseline (stabler than a single jittering shoulder).
+    const otherShoulder = opposite;
+    const midY =
+      otherShoulder && visibleEnough(otherShoulder, minVisibility * 0.6)
+        ? (shoulder.y + otherShoulder.y) / 2
+        : shoulder.y;
+    const baseline = midY * 0.65 + shoulder.y * 0.35;
+    if (wrist.y >= baseline - margin) return false;
+
+    if (reach < 0.035) return false;
+    if (opposite && visibleEnough(opposite, minVisibility * 0.8)) {
+      if (side === "left" && wrist.x > opposite.x + 0.2) return false;
+      if (side === "right" && wrist.x < opposite.x - 0.2) return false;
+    }
+    const nose = landmarks[POSE.NOSE];
+    if (nose && visibleEnough(nose, minVisibility * 0.6) && wrist.y > nose.y + 0.12) {
+      return false;
+    }
+    if (visibleEnough(elbow, minVisibility * 0.7)) {
+      const upper = hypot2(shoulder.x, shoulder.y, elbow.x, elbow.y);
+      const forearm = hypot2(elbow.x, elbow.y, wrist.x, wrist.y);
+      if (upper > options.maxUpperArm || forearm > options.maxForearm) return false;
+    }
+    return true;
+  }
+
+  // Primary signal: wrist clearly above same-side shoulder.
+  if (wrist.y >= shoulder.y - margin) return false;
+
+  if (!visibleEnough(elbow, minVisibility)) return false;
 
   if (
-    !visibleEnough(shoulder, minVisibility) ||
-    !visibleEnough(elbow, minVisibility) ||
-    !visibleEnough(wrist, minVisibility)
+    !ownArmGeometry(shoulder, elbow, wrist, side, opposite, {
+      minSegment: DEFAULTS.minSegment,
+      maxUpperArm: options.maxUpperArm,
+      maxForearm: options.maxForearm,
+      maxWristFromShoulder: options.maxWristFromShoulder,
+    })
   ) {
     return false;
   }
 
-  if (wrist.y >= shoulder.y - margin) return false;
-
-  if (!ownArmGeometry(shoulder, elbow, wrist, side, opposite)) return false;
-
   const angle = elbowAngleDeg(shoulder, elbow, wrist);
-  if (angle < DEFAULTS.minElbowDeg || angle > DEFAULTS.maxElbowDeg) return false;
-
-  if (wristCloserToNeighbor(wrist, torsoCenter(landmarks), otherLandmarks)) return false;
+  if (angle < options.minElbowDeg || angle > options.maxElbowDeg) return false;
 
   return true;
 }
@@ -150,10 +211,22 @@ export function handsRaised(
   landmarks: readonly PoseLandmark[],
   options: HandRaiseOptions = {},
 ): HandsRaised {
-  const margin = options.margin ?? DEFAULTS.margin;
-  const minVisibility = options.minVisibility ?? DEFAULTS.minVisibility;
+  const classroom = !!options.classroom;
+  const margin = options.margin ?? (classroom ? 0.025 : DEFAULTS.margin);
+  const minVisibility = options.minVisibility ?? (classroom ? 0.28 : DEFAULTS.minVisibility);
   const otherLandmarks = options.otherLandmarks ?? [];
-  const opts = { margin, minVisibility, otherLandmarks };
+  const opts = {
+    margin,
+    minVisibility,
+    otherLandmarks,
+    maxWristFromShoulder:
+      options.maxWristFromShoulder ?? (classroom ? 0.7 : DEFAULTS.maxWristFromShoulder),
+    maxUpperArm: options.maxUpperArm ?? (classroom ? 0.55 : DEFAULTS.maxSegment),
+    maxForearm: options.maxForearm ?? (classroom ? 0.55 : DEFAULTS.maxSegment),
+    minElbowDeg: options.minElbowDeg ?? DEFAULTS.minElbowDeg,
+    maxElbowDeg: options.maxElbowDeg ?? (classroom ? 175 : DEFAULTS.maxElbowDeg),
+    classroom,
+  };
   return {
     left: sideRaised(landmarks, "left", opts),
     right: sideRaised(landmarks, "right", opts),

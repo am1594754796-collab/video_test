@@ -1,5 +1,7 @@
 /**
- * First-raise race: after reset, first stable rising-edge raised wins until reset again.
+ * First-raise race: after reset, earliest rising edge wins until reset again.
+ * Same-frame ties prefer earlier edgeAtMs, then higher raise score.
+ * Never prefers lower personIndex.
  */
 
 export type FirstRaiseEvent = {
@@ -10,6 +12,10 @@ export type FirstRaiseEvent = {
 export type RaiseObservation = {
   personIndex: number;
   raised: boolean;
+  /** Continuous raise strength; higher wins same-frame ties when edge times match. */
+  score?: number;
+  /** Interpolated rising-edge time (ms). Prefer over nowMs when present. */
+  edgeAtMs?: number;
 };
 
 export class FirstRaiseTracker {
@@ -54,19 +60,29 @@ export class FirstRaiseTracker {
       return this._winner;
     }
 
-    const rising: number[] = [];
+    type Cand = { personIndex: number; edgeAtMs: number; score: number };
+    const rising: Cand[] = [];
     for (const p of people) {
       const was = this.prevRaised.get(p.personIndex) ?? false;
       if (p.raised && !was) {
-        rising.push(p.personIndex);
+        rising.push({
+          personIndex: p.personIndex,
+          edgeAtMs: p.edgeAtMs ?? nowMs,
+          score: p.score ?? 0,
+        });
       }
       this.prevRaised.set(p.personIndex, p.raised);
     }
 
     if (rising.length === 0) return null;
 
-    rising.sort((a, b) => a - b);
-    this._winner = { personIndex: rising[0], raisedAtMs: nowMs };
+    // Time first, then raise strength — never seat number.
+    rising.sort((a, b) => {
+      if (a.edgeAtMs !== b.edgeAtMs) return a.edgeAtMs - b.edgeAtMs;
+      return b.score - a.score;
+    });
+    const best = rising[0]!;
+    this._winner = { personIndex: best.personIndex, raisedAtMs: best.edgeAtMs };
     return this._winner;
   }
 }

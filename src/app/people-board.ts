@@ -10,6 +10,7 @@ import {
   dedupePosesByTorso,
   detectPosesForVideo,
   FirstRaiseTracker,
+  FULL_MODEL_URL,
   isHandRaised,
   PoseTracker,
   startCamera,
@@ -237,7 +238,11 @@ async function loop(nowMs: number): Promise<void> {
   lastTs = nowMs;
 
   const raw = detectPosesForVideo(landmarker, video, nowMs);
-  const poses = dedupePosesByTorso(raw, { minDistance: 0.14 });
+  const poses = dedupePosesByTorso(raw, {
+    minDistance: 0.045,
+    minSeparationX: 0.035,
+    yWeight: 0.45,
+  });
   const tracked = tracker.update(poses);
 
   for (const t of tracked) {
@@ -299,9 +304,10 @@ async function onStart(): Promise<void> {
     await checkHealth();
     landmarker = await createPoseLandmarker({
       numPoses: 6,
-      minPoseDetectionConfidence: 0.55,
-      minPosePresenceConfidence: 0.55,
-      minTrackingConfidence: 0.5,
+      modelAssetPath: FULL_MODEL_URL,
+      minPoseDetectionConfidence: 0.3,
+      minPosePresenceConfidence: 0.3,
+      minTrackingConfidence: 0.3,
     });
     camera = await startCamera(video);
     tracker = new PoseTracker({ matchDistance: 0.18, maxMissed: 12, minFrames: 8 });

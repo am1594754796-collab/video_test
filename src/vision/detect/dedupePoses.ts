@@ -11,6 +11,16 @@ export type PoseLike = {
 export type DedupeOptions = {
   /** Normalized image distance between torso centers to treat as the same person. */
   minDistance?: number;
+  /**
+   * If |Δx| between torso centers is at least this, never merge (row seating).
+   * Keeps adjacent people who sit shoulder-to-shoulder but are still distinct seats.
+   */
+  minSeparationX?: number;
+  /**
+   * Scale applied to Δy inside the distance metric (default 1).
+   * Values < 1 make vertical lean less likely to trigger a merge.
+   */
+  yWeight?: number;
 };
 
 export function torsoCenter(landmarks: readonly PoseLandmark[]): { x: number; y: number } {
@@ -37,20 +47,27 @@ function meanVisibility(landmarks: readonly PoseLandmark[]): number {
   return n ? sum / n : 0;
 }
 
-function dist(a: { x: number; y: number }, b: { x: number; y: number }): number {
+function mergeDistance(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  yWeight: number,
+): number {
   const dx = a.x - b.x;
-  const dy = a.y - b.y;
+  const dy = (a.y - b.y) * yWeight;
   return Math.hypot(dx, dy);
 }
 
 /**
  * Greedy NMS on torso centers: keep higher-visibility pose when two are too close.
+ * For classroom rows, prefer horizontal separation so adjacent seats are not merged.
  */
 export function dedupePosesByTorso<T extends PoseLike>(
   poses: readonly T[],
   options: DedupeOptions = {},
 ): T[] {
   const minDistance = options.minDistance ?? 0.12;
+  const minSeparationX = options.minSeparationX;
+  const yWeight = options.yWeight ?? 1;
   const ranked = [...poses].sort(
     (a, b) => meanVisibility(b.landmarks) - meanVisibility(a.landmarks),
   );
@@ -58,7 +75,12 @@ export function dedupePosesByTorso<T extends PoseLike>(
 
   for (const pose of ranked) {
     const c = torsoCenter(pose.landmarks);
-    const dup = kept.some((k) => dist(c, torsoCenter(k.landmarks)) < minDistance);
+    const dup = kept.some((k) => {
+      const other = torsoCenter(k.landmarks);
+      const dx = Math.abs(c.x - other.x);
+      if (minSeparationX != null && dx >= minSeparationX) return false;
+      return mergeDistance(c, other, yWeight) < minDistance;
+    });
     if (!dup) kept.push(pose);
   }
 
