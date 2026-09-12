@@ -5,6 +5,7 @@
 
 import { cosineSimilarity, type FaceDescriptor } from "./faceDescriptor";
 import type { PoseLandmark } from "./isHandRaised";
+import { emaBlendLandmarks } from "./landmarkSmooth";
 import { RaiseDebouncer } from "./raiseDebouncer";
 import type { NumberingSlot } from "./numberingSlots";
 
@@ -158,7 +159,7 @@ export function matchDetectionsToSeats(
 }
 
 /**
- * Bind Pose results to seats by Qwen index on the crop. Do not re-sort by torso x.
+ * Bind Pose results to seats by locked index on the crop. Do not re-sort by torso x.
  */
 export function bindPosesToSeatsByIndex(
   anchors: readonly SeatAnchor[],
@@ -183,8 +184,8 @@ export function bindPosesToSeatsByIndex(
       if (seat.missed > maxMissed) seat.landmarks = null;
       return seat;
     }
-    // Keep x/y on the locked face; pose is only for raise detection.
-    seat.landmarks = pose.landmarks;
+    // Pose-assisted track: EMA-smooth MediaPipe joints; keep seat x/y on locked face.
+    seat.landmarks = emaBlendLandmarks(seat.landmarks, pose.landmarks, 0.45);
     seat.missed = 0;
     seat.fresh = true;
     return seat;

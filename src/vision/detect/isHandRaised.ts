@@ -159,28 +159,74 @@ function sideRaised(
   if (reach > options.maxWristFromShoulder) return false;
 
   if (classroom) {
-    // Use mid-shoulder baseline (stabler than a single jittering shoulder).
+    const nose = landmarks[POSE.NOSE];
     const otherShoulder = opposite;
     const midY =
       otherShoulder && visibleEnough(otherShoulder, minVisibility * 0.6)
         ? (shoulder.y + otherShoulder.y) / 2
         : shoulder.y;
-    const baseline = midY * 0.65 + shoulder.y * 0.35;
-    if (wrist.y >= baseline - margin) return false;
+    const topShoulderY = otherShoulder
+      ? Math.min(shoulder.y, otherShoulder.y)
+      : shoulder.y;
+    const bottomShoulderY = otherShoulder
+      ? Math.max(shoulder.y, otherShoulder.y)
+      : shoulder.y;
+    const tilt = bottomShoulderY - topShoulderY;
 
-    if (reach < 0.035) return false;
+    // Chair lean / arm on armrest: elbow high, hand hangs down → never a raise.
+    if (visibleEnough(elbow, minVisibility * 0.45) && wrist.y > elbow.y + 0.015) {
+      return false;
+    }
+
+    // Must be more upward than sideways (rejects torso lean with arm out to the side).
+    const up = shoulder.y - wrist.y;
+    const sideways = Math.abs(wrist.x - shoulder.x);
+    if (up < 0.035) return false;
+    if (sideways > up * 1.15) return false;
+
+    // Raised hand must reach the head band (leaning with hand at chest/waist fails).
+    if (!nose || !visibleEnough(nose, minVisibility * 0.45) || wrist.y > nose.y + 0.08) {
+      return false;
+    }
+
+    // Outward past the outer shoulder without being close to the face.
+    const headX = nose.x;
+    const outward =
+      side === "right"
+        ? wrist.x - Math.max(shoulder.x, headX)
+        : Math.min(shoulder.x, headX) - wrist.x;
+    const dNose = hypot2(wrist.x, wrist.y, nose.x, nose.y);
+    if (outward > 0.05 && dNose > 0.14) return false;
+
+    const nearHead =
+      wrist.y <= nose.y + 0.08 &&
+      wrist.y <= topShoulderY + 0.01 &&
+      reach >= 0.025 &&
+      dNose <= 0.16 &&
+      Math.abs(wrist.x - nose.x) <= 0.14;
+
+    const highRaise =
+      wrist.y < topShoulderY - margin &&
+      wrist.y < midY - margin &&
+      reach >= 0.045 &&
+      up >= 0.05;
+
+    // Any noticeable shoulder tilt: only accept clear hand-to-head, never geometry-only.
+    if (tilt > 0.04 && !nearHead) return false;
+
+    if (!highRaise && !nearHead) return false;
+
     if (opposite && visibleEnough(opposite, minVisibility * 0.8)) {
       if (side === "left" && wrist.x > opposite.x + 0.2) return false;
       if (side === "right" && wrist.x < opposite.x - 0.2) return false;
-    }
-    const nose = landmarks[POSE.NOSE];
-    if (nose && visibleEnough(nose, minVisibility * 0.6) && wrist.y > nose.y + 0.12) {
-      return false;
     }
     if (visibleEnough(elbow, minVisibility * 0.7)) {
       const upper = hypot2(shoulder.x, shoulder.y, elbow.x, elbow.y);
       const forearm = hypot2(elbow.x, elbow.y, wrist.x, wrist.y);
       if (upper > options.maxUpperArm || forearm > options.maxForearm) return false;
+      const elbowOut =
+        side === "right" ? elbow.x - shoulder.x : shoulder.x - elbow.x;
+      if (elbowOut > 0.1 && sideways > up * 0.9 && !nearHead) return false;
     }
     return true;
   }

@@ -52,7 +52,7 @@ export function personBoxesFromNumberedSeats(
       const box = face ? expandFaceToPersonCrop(face) : personBoxFromSeat(s);
       return { ...box, index: s.index };
     });
-  return isolateRowCrops(expanded, { top: 0.08, x: 0.04, bottom: 0.04 });
+  return isolateRowCrops(expanded, { top: 0.22, x: 0.06, bottom: 0.04 });
 }
 
 export function runMpOnPersonBoxes(opts: {

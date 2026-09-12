@@ -2,11 +2,16 @@
 
 本目录 = **举手行为检测** 视觉模块。
 
-人体：`千问 VL（人脸编号）→ 按人放大 ROI → MediaPipe Pose（单目标）`。
-- `detect/qwenMpCascade.ts` — 千问编号后人脸扩成单人框再跑 Pose
+视频页人体：`MediaPipe 多人 Pose 左→右编号 → 近距切开 ROI 放大 → 单人 Pose → 严格举手`（无千问）。
+- `detect/personSplit.ts` — 关节点成框、近距 mid-split、左→右编号
+- `detect/personMpCascade.ts` — 每人放大 ROI → Pose
 - `detect/cascadePose.ts` — ROI → Pose，坐标映射回整帧
 
-- `detect/isHandRaised.ts` — 本人弯臂举手（左右独立）：腕过肩 + 肘弯曲 + 拒绝旁边人的手腕  
+相机快版与视频页同方案：`MediaPipe 多人分割编号 → 近距切开 ROI → 单人 Pose → 严格举手`（无千问）。
+- `detect/qwenMpCascade.ts` — 旧千问级联（仍导出，页面已不再使用）
+
+- `detect/isHandRaised.ts` — MediaPipe Pose 关节点举手（左右独立）：腕过肩 / 贴头 + 拒邻居腕 / 拒斜肩侧臂  
+- `detect/raiseSignal.ts` — 姿态 EMA 平滑 + `isHandRaised` + 连续 N 帧确认 + 抢答时刻  
 - `detect/raiseDebouncer.ts` — 连续帧防抖  
 - `detect/faceDetector.ts` / `faceDescriptor.ts` — 人脸框类型 + 会话模板；检测走 **千问 VL**（`/api/vision/detect-faces`）  
 - `detect/numberingSlots.ts` — 座位槽位：人脸优先 + 位置兜底  

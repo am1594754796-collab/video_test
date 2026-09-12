@@ -76,8 +76,20 @@ export {
   type CascadePose,
 } from "./detect/cascadePose";
 export {
-  runQwenMpCascade,
+  numberPosesLeftToRight,
+  personBoxFromLandmarks,
+  personBoxesFromPoses,
+  personBoxesFromSeats,
+  bindPosesToLockedIndexes,
+  type IndexedPose,
+} from "./detect/personSplit";
+export {
   runMpOnPersonBoxes,
+  type PersonMpResult,
+} from "./detect/personMpCascade";
+export {
+  runQwenMpCascade,
+  runMpOnPersonBoxes as runMpOnPersonBoxesQwen,
   personBoxesFromNumberedSeats,
   type QwenMpResult,
 } from "./detect/qwenMpCascade";
@@ -106,6 +118,10 @@ export { emaBlendLandmarks } from "./detect/landmarkSmooth";
 export {
   evaluateHandRaise,
   shoulderMidline,
+  isArmVertical,
+  isCompactHeadRaise,
+  isLateralArmNotRaise,
+  DEFAULT_RAISE_MARGIN,
   SeatRaiseTracker,
   type RaiseEval,
   type SeatRaiseUpdate,

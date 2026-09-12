@@ -101,4 +101,40 @@ describe("isHandRaised", () => {
     expect(isHandRaised(self, { otherLandmarks: [neighbor] })).toBe(true);
     expect(handsRaised(self, { otherLandmarks: [neighbor] }).left).toBe(true);
   });
+
+  it("classroom mode detects temple raise and rejects lateral lean", () => {
+    const temple = armsDown();
+    temple[POSE.RIGHT_ELBOW] = { x: 0.68, y: 0.3, visibility: 1 };
+    temple[POSE.RIGHT_WRIST] = { x: 0.56, y: 0.18, visibility: 1 };
+    expect(isHandRaised(temple, { classroom: true, margin: 0.02 })).toBe(true);
+
+    const lean = armsDown();
+    lean[POSE.LEFT_SHOULDER] = { x: 0.4, y: 0.4, visibility: 1 };
+    lean[POSE.RIGHT_SHOULDER] = { x: 0.62, y: 0.3, visibility: 1 };
+    lean[POSE.RIGHT_ELBOW] = { x: 0.78, y: 0.34, visibility: 1 };
+    lean[POSE.RIGHT_WRIST] = { x: 0.82, y: 0.28, visibility: 1 };
+    expect(isHandRaised(lean, { classroom: true, margin: 0.02 })).toBe(false);
+  });
+
+  it("rejects large torso tilt when the wrist is only beside the raised shoulder", () => {
+    // #5-style: heavy lean lifts one shoulder; wrist stays near that shoulder / chair.
+    const tilt = armsDown();
+    tilt[POSE.NOSE] = { x: 0.52, y: 0.2, visibility: 1 };
+    tilt[POSE.LEFT_SHOULDER] = { x: 0.38, y: 0.42, visibility: 1 };
+    tilt[POSE.RIGHT_SHOULDER] = { x: 0.64, y: 0.26, visibility: 1 }; // tilt ≈ 0.16
+    tilt[POSE.RIGHT_ELBOW] = { x: 0.74, y: 0.3, visibility: 1 };
+    tilt[POSE.RIGHT_WRIST] = { x: 0.72, y: 0.24, visibility: 1 }; // near raised shoulder, not head
+    expect(isHandRaised(tilt, { classroom: true, margin: 0.02 })).toBe(false);
+  });
+
+  it("rejects chair-lean where elbow is high but the hand hangs down", () => {
+    // Real #5 false positive: elbow on chair back, wrist below elbow toward seat.
+    const chair = armsDown();
+    chair[POSE.NOSE] = { x: 0.55, y: 0.22, visibility: 1 };
+    chair[POSE.LEFT_SHOULDER] = { x: 0.48, y: 0.4, visibility: 1 };
+    chair[POSE.RIGHT_SHOULDER] = { x: 0.68, y: 0.28, visibility: 1 };
+    chair[POSE.LEFT_ELBOW] = { x: 0.78, y: 0.32, visibility: 1 };
+    chair[POSE.LEFT_WRIST] = { x: 0.8, y: 0.48, visibility: 1 };
+    expect(isHandRaised(chair, { classroom: true, margin: 0.02 })).toBe(false);
+  });
 });

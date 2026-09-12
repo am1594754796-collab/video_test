@@ -5,7 +5,8 @@
 | 页面 | 地址 | 需要 | 说明 |
 |------|------|------|------|
 | 举手单人调试 | http://localhost:5173/ | Node.js | 调 margin / minFrames |
-| **人物编号 · 视频回放检测** | http://localhost:5173/people-video.html | Node.js **+ Python** | 本地视频：编号 + 人脸绑座 + 举手 |
+| **人物编号 · 视频回放检测** | http://localhost:5173/people-video.html | **仅 Node.js** | 本地视频：MediaPipe 分割编号 + 举手（**无需 Python / 千问**） |
+| **人物编号 · 相机快版** | http://localhost:5173/people-fast.html | **仅 Node.js** + 相机 | 同上方案，实时相机（**无需 Python / 千问**） |
 | 人物编号原版 | http://localhost:5173/people.html | Node.js **+ Python** | ~10FPS，Python 同步排序 |
 | **计分板（仅展示）** | http://localhost:5173/scoreboard.html | 同域其它页即可 | 大号编号；最先举手持续闪烁；答对 +1 停闪 |
 | **语音作答 · 在线识别 V2.0（推荐）** | http://localhost:5173/speech-online.html | Node.js **+ Python** · **联网** · Chrome/Edge | 实时听写 + DeepSeek 语义 + 10s 限时；通过/超时即停 |
@@ -21,9 +22,104 @@
 
 ---
 
+## 最小配置 · 视频检测（推荐入口）
+
+当前 **视频回放**（`people-video.html`）与 **相机快版**（`people-fast.html`）共用同一套视觉方案：
+
+`MediaPipe 多人 Pose 左→右编号 → 近距切开局部放大 → 严格举手（首帧满足即举手）`
+
+**不依赖** Python API、`api.env`、千问 Key。Python 仅在做语音 / 旧版 `people.html` 时才需要。
+
+### 环境要求（最小）
+
+| 项 | 要求 |
+|----|------|
+| 系统 | Windows / Linux / macOS |
+| Node.js | **18+**（含 npm） |
+| 浏览器 | Chrome / Edge（推荐）；须用 `http://localhost`，不要用 `file://` |
+| 磁盘 | 约数百 MB（`node_modules` + Pose 模型） |
+| 网络 | **安装时**需能拉 npm 包；首次下载 MediaPipe 模型需访问 Google Storage（或从已有机器拷贝 `public/mediapipe/models/`） |
+| 视频页额外 | 本地 `mp4` 等浏览器能解码的视频文件 |
+| 相机页额外 | 本机摄像头权限 |
+
+可选：Python 8765。页顶「服务」可显示本地分割；**未启动 API 也能编号与举手**。
+
+### 一次性安装
+
+在仓库根目录：
+
+```bash
+# 1) 前端依赖
+npm install
+
+# 2) MediaPipe WASM（Vite 从 /mediapipe/wasm 提供）
+mkdir -p public/mediapipe
+# Linux / macOS：
+ln -sfn ../../node_modules/@mediapipe/tasks-vision/wasm public/mediapipe/wasm
+# Windows（PowerShell，无软链权限时可改用复制）：
+# Copy-Item -Recurse node_modules\@mediapipe\tasks-vision\wasm public\mediapipe\wasm
+
+# 3) Pose 模型（至少 full；视频/多人编号默认用它）
+mkdir -p public/mediapipe/models
+curl -L -o public/mediapipe/models/pose_landmarker_full.task \
+  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
+# 可选 lite（单人调试页）：
+# curl -L -o public/mediapipe/models/pose_landmarker_lite.task \
+#   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+```
+
+模型说明见 [`public/mediapipe/README.md`](public/mediapipe/README.md)。确认存在：
+
+- `node_modules/`（`npm install` 成功）
+- `public/mediapipe/wasm/`（链接或拷贝）
+- `public/mediapipe/models/pose_landmarker_full.task`
+
+**Linux 注意：** 若仓库在 `noexec` 挂载（例如部分 `/home/.../data`），请在可执行路径下跑（如 `/mnt/data/...`），否则 `node_modules/.bin/vite` 可能无法执行。
+
+### 启动与使用
+
+**只开前端（最小）：**
+
+```bash
+npm run dev
+```
+
+浏览器打开：
+
+| 用途 | 地址 |
+|------|------|
+| 本地视频检测 | http://localhost:5173/people-video.html |
+| 实时相机检测 | http://localhost:5173/people-fast.html |
+
+**Windows 一键（会顺带起 Python，非必须）：** 双击 `start-people-video.bat`  
+**Linux 一键：** `./start-people-video.sh`（脚本会起 API；仅视频举手仍可不配 Key）
+
+#### 视频回放页操作
+
+1. 等待「模型已就绪」  
+2. **选择视频** → 加载完成后点 **开始检测**  
+3. 设好 **需要人数**（1–6，教室常用 6）  
+4. 系统本地分割左→右编号并锁定 → 再检测举手 / 最先举手  
+5. **下一轮** 清赢家；**重新编号** 重排座位号；可拖进度条后重新编号  
+
+#### 相机快版操作
+
+1. 点 **打开相机**，上半身入画  
+2. 设好 **需要人数**，人齐并稳定若干帧后自动锁定编号  
+3. 举手 → **最先举手**；**下一轮** / **重新编号** 同上  
+
+**不要**同时开多个会抢 `5173` 的 `start-*.bat`；已有 Vite 在跑时，只需再开对应网页标签。
+
+---
+
 ## 三大功能：如何启动与注意事项
 
-三个能力**各自独立网页**，可单独用，也可三开联调计分。首次使用前在仓库根目录执行一次：
+三个能力**各自独立网页**，可单独用，也可三开联调计分。
+
+> **只做视频/相机举手编号：** 见上方「最小配置 · 视频检测」，一般 **不必**装 Python。  
+> 下面步骤面向「视觉 + 语音 + 计分」完整教室场景。
+
+首次完整安装（含语音 API）在仓库根目录执行一次：
 
 ```bat
 npm.cmd install
@@ -36,33 +132,33 @@ cd ..
 | 端口 | 服务 |
 |------|------|
 | `5173` | Vite 前端（所有网页） |
-| `8765` | Python API（编号排序 / 语音匹配） |
+| `8765` | Python API（语音匹配 / 旧版排序；视频检测可选） |
 
 **不要同时开多个** `start-*.bat`（会抢同一套端口）。已有 Vite + API 在跑时，只需再开对应网页标签即可。
 
 ---
 
-### 1. 视频解析（举手 / 编号）· 推荐快版
+### 1. 视频解析（举手 / 编号）· 相机 / 本地视频
 
 | 项 | 说明 |
 |----|------|
-| 启动 | 双击 `start-people-fast.bat` |
-| 页面 | http://localhost:5173/people-fast.html |
-| 需要 | Node.js + Python；本机相机；Chrome / Edge 优先 |
-| 对照页 | `start-people.bat` → `people.html`（每帧排序，更慢） |
+| 最小启动 | `npm run dev` → 打开下方页面（**无需 Python**） |
+| 相机页 | http://localhost:5173/people-fast.html |
+| 视频页 | http://localhost:5173/people-video.html |
+| Windows 一键 | `start-people-fast.bat` / `start-people-video.bat` |
+| 需要 | Node.js；相机页还需摄像头；Chrome / Edge 优先 |
+| 对照页 | `people.html`（旧：每帧 Python 排序，更慢，需 API） |
 
-**操作：** 点「开始」→ 人数达到设定值并稳定后自动左→右锁定编号并绑人脸 → 举手 / 最先举手 →「下一轮」清赢家；「重新编号」可重排。
-
-离线用本地视频验收同一套能力：`start-people-video.bat` → http://localhost:5173/people-video.html  
+**操作：** 人数达标并锁定左→右编号 → 举手 / 最先举手 →「下一轮」清赢家；「重新编号」可重排。
 
 **注意：**
 
-- 须用 **`http://localhost:5173`**（非 `file://`），否则无摄像头权限  
-- Windows：设置 → 隐私 → 相机 → 允许浏览器使用  
-- 页顶须显示 **Python API: 已连接**（排序依赖 `8765`）  
-- **人脸绑座（千问）：** 统一配置 `python/data/api.env`（从 `deploy/api.env.example` 复制），**只填** `LLM_API_KEY`；改完重启。换厂商见 [`docs/API-PROVIDERS.md`](docs/API-PROVIDERS.md)  
+- 须用 **`http://localhost:5173`**（非 `file://`）  
+- 相机页：系统隐私设置允许浏览器使用相机  
+- **不再需要** `LLM_API_KEY` / 千问做人脸编号（本地 MediaPipe 分割编号）  
 - 默认期望人数可在页内修改（调试常用 2；教室可改 1–6）  
-- 短暂丢检会按人脸模板/座位位置尽量找回原号；大挪位请点「重新编号」
+- 大挪位或人数变化请点「重新编号」  
+- 细节与安装清单见上文 **「最小配置 · 视频检测」**
 
 ---
 
@@ -546,50 +642,40 @@ npm.cmd run lint
 | `margin` | `0.04` | 腕相对肩的高度边距（越大越不易误报） |
 | `minFrames` | `8` | 连续帧一致才翻转举手状态 |
 
-### 人物编号快版（推荐 · `/people-fast.html`）· **视频解析 V1.0**
+### 人物编号快版 / 视频页（推荐 · `/people-fast.html` · `/people-video.html`）
 
-> **V1.0 已定稿：** 本页已满足「人数锁定编号 → 举手 → 最先举手」需求，作为视频解析模块正式基线。
+> 与上文「最小配置 · 视频检测」同一套方案；**无需 Python / 千问**。
 
-流程：**等人齐 → Python 排一次号并锁定 → 只处理举手 / 谁先举手**。
+流程：**等人齐 → MediaPipe 左→右编号并锁定 → 近距切开放大 Pose → 首帧满足规则即举手 / 谁先举手**。
 
-1. 运行 `start-people-fast.bat`（或手动开 Python API + `npm.cmd run dev`）  
-2. 打开 http://localhost:5173/people-fast.html  
-3. 确认 **需要人数**（当前默认 **2**，可 1–6）  
-4. 点 **打开相机**；人站好、上半身入画  
-5. 人数达到设定值并稳定约 8 帧后，自动 Python 左→右编号并锁定  
-6. 举手；**最先举手**闪烁；**下一轮**再赛；换人或重排点 **重新编号**  
+1. `npm run dev`（或 `start-people-fast.bat` / `start-people-video.bat`）  
+2. 打开 http://localhost:5173/people-fast.html 或 `/people-video.html`  
+3. 确认 **需要人数**（1–6）  
+4. 相机：点 **打开相机**；视频：选文件后点 **开始检测**  
+5. 人数达标并稳定后锁定编号 → 举手；**最先举手**；**下一轮** / **重新编号**  
 
 #### 如何修改「需要人数」
 
 | 改法 | 位置 | 说明 |
 |------|------|------|
-| **页面上改（推荐）** | 快版页控件「需要人数」 | 打开相机前 / 点「重新编号」前改即可，范围 1–6 |
-| **改页面默认值** | `people-fast.html` → `#input-expected` 的 `value="2"` | 下次打开页面的默认人数 |
-| **改代码回退默认** | `src/app/people-board-fast.ts` → `readExpectedCount()` 里的 `return 2` | 输入框无效时的回退值 |
-
-教室若固定 6 人：把上表两处默认改成 `6`，或打开页面后把「需要人数」调到 6。
+| **页面上改（推荐）** | 页内「需要人数」 | 锁定前 /「重新编号」前改即可，范围 1–6 |
+| **改页面默认值** | `people-fast.html` / `people-video.html` → `#input-expected` 的 `value` | 下次打开页面的默认人数 |
 
 要点：
 
-- 锁定前不做举手竞态，避免号还在变就判定  
-- 锁定后编号跟人走：短暂出画再回来仍是原座位号；千问人脸只在**丢座位时**（最多每秒一次）补检，位置作兜底  
-- 追踪放宽：更大匹配半径、约 3 秒丢检容忍  
-- 锁定后编号跟 track，不再每帧打排序 API  
-- API 失败时用本地左→右规则完成这一次锁定  
-- 两人请尽量左右分开站；若对调座位后号乱了，点「重新编号」  
+- 锁定前不做举手竞态  
+- 锁定后按座位号跟踪；短暂丢检可按位置找回；大挪位请「重新编号」  
+- 举手：规则首帧通过即确认（无多帧防抖）；检测间隔约 16–20ms  
 
-#### 编号变 `?` / 动一下就丢人时
+#### 编号不稳 / 漏人时
 
-常见原因：只按临时 `trackId` 记人，丢检后 ID 变了。快版已用「锁定座位 + 位置重绑」缓解。仍不稳时可：
-
-1. 站稳后再等锁定；锁定后小范围活动通常可保持原号  
-2. 不要长时间离开原站位（超过重绑距离约画面宽度的 35% 会认不回）  
-3. 光照均匀、上半身入画  
-4. 换人或大范围挪位后点 **重新编号**  
+1. 站稳后再等锁定；光照均匀、上半身入画  
+2. 贴得近时依赖近距切开；仍粘连可略拉开间距  
+3. 换人或大范围挪位后点 **重新编号**  
 
 ### 人物编号原版（`/people.html`）
 
-每帧都请求 Python 排序（约 10FPS），适合对照。页内可跳转快版。
+每帧都请求 Python 排序（约 10FPS），适合对照。**需要** Python API。页内可跳转快版。
 
 ---
 
@@ -597,24 +683,21 @@ npm.cmd run lint
 
 ```
 video_test/
-  start.bat / start.ps1      ← 举手单人一键启动
-  start-people-fast.bat      ← 人物快版 + Python（推荐）
+  start-people-video.bat/.sh ← 视频回放检测
+  start-people-fast.bat      ← 相机快版
   start-people.bat           ← 人物原版 + Python
-  index.html                 ← 举手单人调试
-  people-fast.html           ← 人物编号快版（~20FPS）
-  people.html                ← 人物编号原版（~10FPS）
+  people-video.html          ← 本地视频检测（最小：仅 Node）
+  people-fast.html           ← 相机快版（最小：仅 Node）
+  people.html                ← 人物编号原版（需 Python）
+  public/mediapipe/          ← WASM + Pose 模型（必装）
   package.json
-  vite.config.ts             ← 含 /api 代理到 :8765
-  src/vision/                ← MediaPipe / 举手 / 去重 / 追踪 / 最先举手
+  vite.config.ts
+  src/vision/                ← MediaPipe / 分割编号 / 举手 / 最先举手
   src/app/
-    people-board-fast.ts     ← 快版逻辑
-    people-board.ts          ← 原版逻辑
-    people-board.css
-  python/
-    requirements.txt
-    sort_people.py
-    server.py
-    tests/
+    people-board-video.ts
+    people-board-fast.ts
+    people-board.ts
+  python/                    ← 语音 / 旧版排序（视频检测可选）
   tests/vision/
   SPEC.md / docs/ / tasks/
 ```
@@ -625,9 +708,9 @@ video_test/
 
 ### 视频解析 V1.0（定稿）
 
-- **结论：** 人物编号快版已满足当前需求，标记为 **视频解析 V1.0**。  
-- **入口：** `people-fast.html` / `start-people-fast.bat`  
-- **范围：** 人数达标锁定编号、**人脸绑定座位号**、举手判定、最先举手反馈；不含计分 / 抢答流程 / 姓名底库。  
+- **结论：** 人物编号快版 / 视频页已满足当前需求。  
+- **入口：** `people-fast.html` / `people-video.html`；最小环境见文首 **「最小配置 · 视频检测」**（仅 Node.js + MediaPipe，无需 Python / 千问）。  
+- **范围：** 人数达标锁定编号、举手判定、最先举手反馈；不含计分 / 抢答流程 / 姓名底库。  
 
 以下为 V1.0 及此前已落地、换机部署时需要知道的内容：
 

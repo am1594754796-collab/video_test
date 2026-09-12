@@ -1,60 +1,57 @@
 /**
- * People board (fast path):
- * 1) Wait until on-screen count matches expected (stable) → one Python L→R sort → lock indices to trackIds
- * 2) At lock: bind each seat to a session face template
- * 3) After lock: rebind by face (preferred) then position; hand-raise + first-raise only
+ * People board (camera): same pipeline as video —
+ * MediaPipe multi-person self-split L→R lock → isolate zoom Pose → strict raise.
+ * No Qwen / cloud face.
  */
 
 import { PoseLandmarker } from "@mediapipe/tasks-vision";
 import {
-  assignFaceDescriptorsToTracks,
-  countSlotsWithFace,
+  bindPosesToSeatsByIndex,
   createCountLockState,
   createPoseLandmarker,
+  createSeatAnchors,
+  dedupePosesByTorso,
+  detectPosesMultiBand,
   FirstRaiseTracker,
   FULL_MODEL_URL,
-  indexByTrackIdFromSlots,
-  isHandRaised,
-  numberFacesLeftToRight,
+  numberPosesLeftToRight,
   observePersonCount,
-  PoseTracker,
-  rebindSlotsToTracks,
-  runQwenMpCascade,
-  shouldPollVisionFaces,
+  personBoxesFromPoses,
+  personBoxesFromSeats,
+  runMpOnPersonBoxes,
+  SeatRaiseTracker,
+  seatsToNumberingSlots,
   slotsFromSort,
   startCamera,
+  torsoCenter,
   unlockCountLock,
   type CameraHandle,
   type CountLockSnapshot,
-  type FaceBox,
-  type FaceDescriptor,
   type FirstRaiseEvent,
-  type NumberedFace,
   type NumberingSlot,
   type PersonBox,
-  type TrackedPose,
+  type PoseLandmark,
+  type SeatAnchor,
+  type SeatRaiseUpdate,
 } from "../vision";
 import { POSE } from "../vision/detect/isHandRaised";
 import { publishClassroomEvent } from "./classroomBus";
-import { detectFacesViaQwen, fetchQwenFaceStatus } from "./qwenFaceDetect";
 
-const DETECT_INTERVAL_MS = 50;
-/** Qwen-VL: lock capture once; afterwards only if a seat is missing, at most every 1s. */
-const FACE_DETECT_INTERVAL_MS = 1000;
-/** Consecutive Qwen snapshots at expected count before lock. */
-const LOCK_STABLE_FRAMES = 1;
-/** How far (normalized) a returning person can be from their locked seat to reclaim the number. */
-const REBIND_MAX_DISTANCE = 0.35;
-const MIN_FACE_SIMILARITY = 0.82;
-/** Prefer horizontal seat lock; avoid stealing a neighbor track. */
-const TRACK_MATCH_DISTANCE = 0.12;
-const TRACK_MATCH_Y_WEIGHT = 0.35;
-const TRACK_MAX_MISSED = 8; // drop ghosts faster in crowded scenes
+const DETECT_INTERVAL_MS = 20;
+const DETECT_INTERVAL_LOCKED_MS = 16;
+/** Consecutive frames at expected count before lock. */
+const LOCK_STABLE_FRAMES = 3;
+/** Strict MediaPipe joint raise — first frame that passes counts. */
+const RAISE_MARGIN = 0.025;
+const RAISE_MIN_VISIBILITY = 0.25;
+const RAISE_MIN_FRAMES = 1;
+const RAISE_SCORE_THRESHOLD = 0.015;
+const TRACK_MAX_MISSED = 10;
+const BUS_SOURCE = "people-fast";
 
 const frameCanvas = document.createElement("canvas");
 const cropCanvas = document.createElement("canvas");
-
-type PersonPoint = { id: number; x: number; y: number };
+const bandCanvas = document.createElement("canvas");
 
 type SortedPerson = {
   index: number;
@@ -62,11 +59,6 @@ type SortedPerson = {
   y: number;
   id?: string | number | null;
   raised?: boolean;
-};
-
-type SortResponse = {
-  count: number;
-  people: SortedPerson[];
 };
 
 const video = document.querySelector<HTMLVideoElement>("#video")!;
@@ -88,103 +80,21 @@ const HEALTH_URL = "/api/health";
 
 let camera: CameraHandle | null = null;
 let landmarker: PoseLandmarker | null = null;
-let qwenFaceOk = false;
-let faceInFlight = false;
 let raf = 0;
 let lastTs = 0;
-let lastFaceTs = 0;
-let lastFaceByTrack = new Map<number, FaceDescriptor>();
-let lastFaceBoxes: FaceBox[] = [];
-let lastNumberedFaces: NumberedFace[] = [];
 let lastPersonCrops: PersonBox[] = [];
 let canvasSized = false;
-let apiOk = false;
-let tracker = new PoseTracker({
-  matchDistance: TRACK_MATCH_DISTANCE,
-  matchYWeight: TRACK_MATCH_Y_WEIGHT,
-  maxMissed: TRACK_MAX_MISSED,
-  minFrames: 8,
-});
 let race = new FirstRaiseTracker();
 let countLock: CountLockSnapshot = createCountLockState();
-/** Sticky seats after lock: index ↔ trackId + face + last known center. */
 let numberingSlots: NumberingSlot[] = [];
-let indexByTrackId = new Map<number, number>();
+let seatAnchors: SeatAnchor[] = [];
+let seatRaiseByIndex = new Map<number, SeatRaiseTracker>();
+let lastRaiseByIndex = new Map<number, SeatRaiseUpdate>();
 let lockedPeople: SortedPerson[] = [];
-let sortInFlight = false;
 let detectInFlight = false;
+let lockInFlight = false;
 let lastUiKey = "";
 let lastWinnerKey = "";
-
-function headAnchor(t: TrackedPose): { x: number; y: number } {
-  const nose = t.landmarks[POSE.NOSE];
-  if (nose && (nose.visibility ?? 1) >= 0.35) {
-    return { x: nose.x, y: nose.y };
-  }
-  return { x: t.center.x, y: Math.max(0, t.center.y - 0.12) };
-}
-
-function pollQwenFaces(nowMs: number, expected: number, tracked: TrackedPose[] = []): void {
-  if (!qwenFaceOk) return;
-  if (
-    !shouldPollVisionFaces({
-      nowMs,
-      lastFaceTs,
-      minIntervalMs: FACE_DETECT_INTERVAL_MS,
-      inFlight: faceInFlight,
-    })
-  ) {
-    return;
-  }
-  faceInFlight = true;
-  lastFaceTs = nowMs;
-  void detectFacesViaQwen(video, { maxFaces: expected })
-    .then((faces) => {
-      lastFaceBoxes = faces;
-      lastNumberedFaces = numberFacesLeftToRight(faces, expected);
-      if (tracked.length) {
-        lastFaceByTrack = assignFaceDescriptorsToTracks(
-          video,
-          tracked.map((t) => {
-            const h = headAnchor(t);
-            return { trackId: t.trackId, x: h.x, y: h.y };
-          }),
-          faces,
-        );
-      }
-    })
-    .catch((err) => {
-      console.warn("[face/qwen]", err);
-    })
-    .finally(() => {
-      faceInFlight = false;
-    });
-}
-
-async function captureFaceTemplates(tracked: TrackedPose[]): Promise<number> {
-  if (!qwenFaceOk) return 0;
-  try {
-    lastFaceBoxes = await detectFacesViaQwen(video);
-    lastFaceByTrack = assignFaceDescriptorsToTracks(
-      video,
-      tracked.map((t) => {
-        const h = headAnchor(t);
-        return { trackId: t.trackId, x: h.x, y: h.y };
-      }),
-      lastFaceBoxes,
-    );
-    lastFaceTs = performance.now();
-  } catch (err) {
-    console.warn("[face/qwen] lock capture failed", err);
-    return countSlotsWithFace(numberingSlots);
-  }
-  for (const slot of numberingSlots) {
-    if (slot.trackId == null) continue;
-    const desc = lastFaceByTrack.get(slot.trackId);
-    if (desc) slot.faceDescriptor = desc;
-  }
-  return countSlotsWithFace(numberingSlots);
-}
 
 function readExpectedCount(): number {
   const n = Number(inputExpected.value);
@@ -197,10 +107,9 @@ function setStatus(text: string): void {
 }
 
 function setApiStatus(ok: boolean, detail?: string): void {
-  apiOk = ok;
   apiStatusEl.textContent = ok
-    ? `Python API: 已连接${detail ? ` · ${detail}` : ""}`
-    : `Python API: 未连接${detail ? ` · ${detail}` : ""}`;
+    ? `服务: 已连接${detail ? ` · ${detail}` : " · 本地 MediaPipe 编号"}`
+    : `服务: ${detail ?? "可选"}`;
   apiStatusEl.classList.toggle("ok", ok);
   apiStatusEl.classList.toggle("bad", !ok);
 }
@@ -221,104 +130,130 @@ async function checkHealth(): Promise<boolean> {
   try {
     const res = await fetch(HEALTH_URL, { cache: "no-store" });
     if (!res.ok) throw new Error(String(res.status));
-    setApiStatus(true);
+    setApiStatus(true, "本地分割");
     return true;
   } catch {
-    setApiStatus(false, "请先启动 python/server.py");
+    setApiStatus(true, "本地分割（API 未启动也可编号举手）");
     return false;
   }
 }
 
-function sortLocal(people: PersonPoint[]): SortResponse {
-  const sorted = [...people].sort((a, b) => a.x - b.x).slice(0, 6);
-  return {
-    count: sorted.length,
-    people: sorted.map((p, i) => ({
-      index: i + 1,
-      x: p.x,
-      y: p.y,
-      id: p.id,
-    })),
-  };
+function scoutPoses() {
+  if (!landmarker) return [];
+  const raw = detectPosesMultiBand(landmarker, video, frameCanvas, bandCanvas);
+  return dedupePosesByTorso(raw, {
+    minDistance: 0.09,
+    minSeparationX: 0.045,
+    yWeight: 0.45,
+  });
 }
 
-function applyLockFromSort(sorted: SortResponse): void {
-  numberingSlots = slotsFromSort(sorted.people);
-  indexByTrackId = indexByTrackIdFromSlots(numberingSlots);
-  lockedPeople = sorted.people.map((p) => ({ ...p, raised: false }));
-}
-
-function syncSlotsWithTracks(tracked: TrackedPose[]): void {
-  numberingSlots = rebindSlotsToTracks(
-    numberingSlots,
-    tracked.map((t) => ({
-      trackId: t.trackId,
-      x: t.center.x,
-      y: t.center.y,
-      faceDescriptor: lastFaceByTrack.get(t.trackId) ?? null,
-    })),
-    { maxDistance: REBIND_MAX_DISTANCE, minFaceSimilarity: MIN_FACE_SIMILARITY },
+function applyLockFromIndexed(
+  numbered: { index: number; x: number; y: number; landmarks: readonly PoseLandmark[] }[],
+): void {
+  numberingSlots = slotsFromSort(
+    numbered.map((p) => ({ index: p.index, x: p.x, y: p.y, id: p.index })),
   );
-  indexByTrackId = indexByTrackIdFromSlots(numberingSlots);
-  lockedPeople = numberingSlots.map((s) => ({
+  seatAnchors = createSeatAnchors(numberingSlots, { minFrames: RAISE_MIN_FRAMES });
+  numberingSlots = seatsToNumberingSlots(seatAnchors);
+  lockedPeople = numbered.map((p) => ({
+    index: p.index,
+    x: p.x,
+    y: p.y,
+    id: p.index,
+    raised: false,
+  }));
+  seatRaiseByIndex = new Map(
+    seatAnchors.map((s) => [
+      s.index,
+      new SeatRaiseTracker({
+        minFrames: RAISE_MIN_FRAMES,
+        scoreThreshold: RAISE_SCORE_THRESHOLD,
+        smoothAlpha: 0.4,
+        raiseOptions: {
+          classroom: true,
+          margin: RAISE_MARGIN,
+          minVisibility: RAISE_MIN_VISIBILITY,
+        },
+      }),
+    ]),
+  );
+  lastRaiseByIndex = new Map();
+}
+
+function peopleFromSeats(seats: SeatAnchor[]): SortedPerson[] {
+  return seats.map((s) => ({
     index: s.index,
     x: s.x,
     y: s.y,
-    id: s.trackId,
-    raised: false,
+    id: s.index,
+    raised: lastRaiseByIndex.get(s.index)?.raised ?? false,
   }));
 }
 
-async function lockNumbering(payload: PersonPoint[], tracked: TrackedPose[]): Promise<void> {
-  if (sortInFlight) return;
-  sortInFlight = true;
-  try {
-    const sorted = sortLocal(payload);
-    applyLockFromSort(sorted);
-    const faceBound = await captureFaceTemplates(tracked);
-    race = new FirstRaiseTracker();
-    race.update(
-      sorted.people.map((p) => ({ personIndex: p.index, raised: false })),
-      performance.now(),
-    );
-    lastUiKey = "";
-    lastWinnerKey = "";
-    publishClassroomEvent({
-      type: "numbering-locked",
-      seats: sorted.people.map((p) => p.index),
-      source: "people-fast",
-    });
-    setApiStatus(true, "千问左→右编号已锁定");
-    setStatus(
-      `已锁定 ${sorted.count} 人（左→右）· 千问人脸 ${faceBound}/${sorted.count} · 开始举手检测`,
-    );
-  } finally {
-    sortInFlight = false;
+function updateSeatRaises(seats: SeatAnchor[], nowMs: number): void {
+  const withLm = seats.filter((s) => s.landmarks);
+  for (const seat of seats) {
+    const tracker = seatRaiseByIndex.get(seat.index);
+    if (!tracker) continue;
+    const neighborLms = withLm
+      .filter((s) => s.index !== seat.index)
+      .map((s) => s.landmarks!);
+    const upd = tracker.update(seat.landmarks, nowMs, neighborLms);
+    lastRaiseByIndex.set(seat.index, upd);
   }
 }
 
-function peopleFromLockedTracks(tracked: TrackedPose[]): SortedPerson[] {
-  const out: SortedPerson[] = [];
-  for (const t of tracked) {
-    const index = indexByTrackId.get(t.trackId);
+function indexedPosesFromCascade(
+  poses: readonly { box: PersonBox; landmarks: readonly PoseLandmark[] }[],
+): Array<{ index: number; x: number; y: number; landmarks: readonly PoseLandmark[] }> {
+  const out: Array<{
+    index: number;
+    x: number;
+    y: number;
+    landmarks: readonly PoseLandmark[];
+  }> = [];
+  for (const p of poses) {
+    const index = p.box.index;
     if (index == null) continue;
-    out.push({
-      index,
-      x: t.center.x,
-      y: t.center.y,
-      id: t.trackId,
-      raised: t.debouncer.raised,
-    });
+    const c = torsoCenter(p.landmarks);
+    const nose = p.landmarks[POSE.NOSE];
+    const vis = nose?.visibility ?? 1;
+    const x = nose && vis >= 0.25 ? nose.x : c.x;
+    const y = nose && vis >= 0.25 ? nose.y : Math.max(0, c.y - 0.1);
+    out.push({ index, x, y, landmarks: p.landmarks });
   }
-  out.sort((a, b) => a.index - b.index);
   return out;
+}
+
+function lockNumbering(
+  numbered: { index: number; x: number; y: number; landmarks: readonly PoseLandmark[] }[],
+): void {
+  // observePersonCount may already flip locked=true; still need seat anchors.
+  if (seatAnchors.length > 0) return;
+  countLock = { locked: true, streak: 1, lastCount: numbered.length };
+  applyLockFromIndexed(numbered);
+  race = new FirstRaiseTracker();
+  race.update(
+    numbered.map((f) => ({ personIndex: f.index, raised: false })),
+    performance.now(),
+  );
+  lastUiKey = "";
+  lastWinnerKey = "";
+  publishClassroomEvent({
+    type: "numbering-locked",
+    seats: numbered.map((f) => f.index),
+    source: BUS_SOURCE,
+  });
+  setStatus(
+    `已锁定 ${numbered.length} 人（左→右自分割）· 近距已切开局部放大 · MediaPipe 举手`,
+  );
 }
 
 function renderWinner(winner: FirstRaiseEvent | null): void {
   const key = winner ? String(winner.personIndex) : "";
   if (key === lastWinnerKey) return;
   lastWinnerKey = key;
-
   if (winner) {
     winnerValue.textContent = `#${winner.personIndex}`;
     winnerCard.classList.add("has-winner");
@@ -328,7 +263,7 @@ function renderWinner(winner: FirstRaiseEvent | null): void {
     publishClassroomEvent({
       type: "first-raise",
       personIndex: winner.personIndex,
-      source: "people-fast",
+      source: BUS_SOURCE,
     });
   } else {
     winnerValue.textContent = "—";
@@ -361,13 +296,9 @@ function renderHud(
   for (const p of display) {
     const li = document.createElement("li");
     const isWinner = winner?.personIndex === p.index;
-    if (isWinner) {
-      li.textContent = `${p.index} 最先`;
-    } else if (p.raised) {
-      li.textContent = `${p.index} 举手`;
-    } else {
-      li.textContent = String(p.index);
-    }
+    if (isWinner) li.textContent = `${p.index} 最先`;
+    else if (p.raised) li.textContent = `${p.index} 举手`;
+    else li.textContent = String(p.index);
     li.classList.toggle("raised", !!p.raised && !isWinner);
     li.classList.toggle("winner", isWinner);
     listEl.appendChild(li);
@@ -375,61 +306,52 @@ function renderHud(
   renderWinner(winner);
 }
 
+function drawPersonCrops(boxes: readonly PersonBox[], w: number, h: number): void {
+  if (boxes.length === 0) return;
+  ctx.save();
+  ctx.setLineDash([6, 4]);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(240, 180, 41, 0.8)";
+  ctx.font = "12px Segoe UI, sans-serif";
+  ctx.fillStyle = "rgba(240, 180, 41, 0.95)";
+  for (const b of boxes) {
+    const x = b.xMin * w;
+    const y = b.yMin * h;
+    ctx.strokeRect(x, y, (b.xMax - b.xMin) * w, (b.yMax - b.yMin) * h);
+    const label = b.index != null ? `放大 #${b.index}` : "放大";
+    ctx.fillText(label, x + 4, Math.max(14, y - 4));
+  }
+  ctx.restore();
+}
+
 function drawOverlay(
-  tracked: TrackedPose[],
   people: SortedPerson[],
   winner: FirstRaiseEvent | null,
   locked: boolean,
+  preview?: SortedPerson[],
 ): void {
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
+  drawPersonCrops(lastPersonCrops, w, h);
 
-  if (lastPersonCrops.length) {
-    ctx.save();
-    ctx.setLineDash([6, 4]);
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(240, 180, 41, 0.8)";
-    ctx.font = "12px Segoe UI, sans-serif";
-    ctx.fillStyle = "rgba(240, 180, 41, 0.95)";
-    for (const b of lastPersonCrops) {
-      ctx.strokeRect(b.xMin * w, b.yMin * h, (b.xMax - b.xMin) * w, (b.yMax - b.yMin) * h);
-      ctx.fillText("放大", b.xMin * w + 4, Math.max(14, b.yMin * h - 4));
-    }
-    ctx.restore();
-  }
-
-  const faces = lastNumberedFaces.length ? lastNumberedFaces : lastFaceBoxes;
-  for (const f of faces) {
-    ctx.strokeStyle = "rgba(61, 156, 253, 0.85)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(f.xMin * w, f.yMin * h, f.width * w, f.height * h);
-    if (f.index != null) {
-      ctx.fillStyle = "rgba(61, 156, 253, 0.95)";
-      ctx.font = "bold 16px Segoe UI, sans-serif";
-      ctx.fillText(`#${f.index}`, f.xMin * w + 4, Math.max(16, f.yMin * h - 6));
-    }
-  }
-
-  if (locked) {
-    for (const slot of numberingSlots) {
-      if (slot.trackId != null) continue;
-      ctx.fillStyle = "rgba(139, 152, 165, 0.85)";
+  if (!locked) {
+    for (const p of preview ?? []) {
+      ctx.fillStyle = "rgba(231, 236, 241, 0.9)";
       ctx.font = "bold 24px Segoe UI, sans-serif";
-      ctx.fillText(`#${slot.index}?`, slot.x * w - 18, slot.y * h - 16);
+      ctx.fillText(`#${p.index}?`, p.x * w - 14, p.y * h - 16);
     }
+    return;
   }
 
-  for (const t of tracked) {
-    const index = locked ? indexByTrackId.get(t.trackId) : undefined;
-    if (locked && index == null) continue; // stranger / not yet rebound — don't flash "?"
-    const label = index ?? "?";
+  for (const seat of seatAnchors) {
+    const index = seat.index;
     const isWinner = winner != null && index === winner.personIndex;
-    const raised = t.debouncer.raised;
-    const ls = t.landmarks[POSE.LEFT_SHOULDER];
-    const rs = t.landmarks[POSE.RIGHT_SHOULDER];
+    const raised = lastRaiseByIndex.get(index)?.raised ?? false;
+    const ls = seat.landmarks?.[POSE.LEFT_SHOULDER];
+    const rs = seat.landmarks?.[POSE.RIGHT_SHOULDER];
     if (ls && rs) {
-      ctx.strokeStyle = isWinner ? "#f0b429" : raised ? "#2dd4a8" : locked ? "#3d9cfd" : "#8b98a5";
+      ctx.strokeStyle = isWinner ? "#f0b429" : raised ? "#2dd4a8" : "#3d9cfd";
       ctx.lineWidth = isWinner ? 5 : 3;
       ctx.beginPath();
       ctx.moveTo(ls.x * w, ls.y * h);
@@ -438,138 +360,142 @@ function drawOverlay(
     }
     ctx.fillStyle = isWinner ? "#f0b429" : raised ? "#2dd4a8" : "#e7ecf1";
     ctx.font = "bold 28px Segoe UI, sans-serif";
-    let text: string;
-    if (!locked) text = "…";
-    else if (isWinner) text = `#${label} 最先`;
-    else if (raised) text = `#${label} 举手`;
-    else text = `#${label}`;
-    ctx.fillText(text, t.center.x * w - 14, t.center.y * h - 16);
+    const text = isWinner ? `#${index} 最先` : raised ? `#${index} 举手` : `#${index}`;
+    ctx.fillText(text, seat.x * w - 14, seat.y * h - 16);
   }
-
   void people;
 }
 
 function clearNumberingLock(): void {
   countLock = unlockCountLock(countLock);
   numberingSlots = [];
-  indexByTrackId = new Map();
+  seatAnchors = [];
+  seatRaiseByIndex = new Map();
+  lastRaiseByIndex = new Map();
   lockedPeople = [];
-  lastFaceByTrack = new Map();
-  lastFaceBoxes = [];
-  lastNumberedFaces = [];
   lastPersonCrops = [];
   race = new FirstRaiseTracker();
   lastUiKey = "";
+  lockInFlight = false;
   renderWinner(null);
-  publishClassroomEvent({ type: "numbering-cleared", source: "people-fast" });
+  publishClassroomEvent({ type: "numbering-cleared", source: BUS_SOURCE });
 }
 
 async function loop(nowMs: number): Promise<void> {
   raf = requestAnimationFrame((t) => void loop(t));
   if (!landmarker || video.readyState < 2) return;
   if (!ensureCanvasSize()) return;
-  if (nowMs - lastTs < DETECT_INTERVAL_MS) return;
+  const interval = countLock.locked ? DETECT_INTERVAL_LOCKED_MS : DETECT_INTERVAL_MS;
+  if (nowMs - lastTs < interval) return;
   lastTs = nowMs;
   if (detectInFlight) return;
   detectInFlight = true;
   try {
+    const expected = readExpectedCount();
 
-  const expected = readExpectedCount();
-  const cascade = runQwenMpCascade({
-    landmarker,
-    frameCanvas,
-    cropCanvas,
-    source: video,
-    faces: lastFaceBoxes,
-  });
-  lastPersonCrops = cascade.boxes;
-  const poses = cascade.poses;
-  const trackedAll = tracker.update(poses);
-  const fresh = trackedAll.filter((t) => t.fresh);
-  const tracked = countLock.locked
-    ? trackedAll
-    : (fresh.length >= expected ? fresh : trackedAll).slice(0, expected);
+    if (!countLock.locked) {
+      const scout = scoutPoses();
+      const numbered = numberPosesLeftToRight(scout, expected);
+      const liveCount = numbered.length;
+      const preview = numbered.map((p) => ({
+        index: p.index,
+        x: p.x,
+        y: p.y,
+        id: p.index,
+      }));
 
-  pollQwenFaces(nowMs, expected, tracked);
-  if (countLock.locked) {
-    syncSlotsWithTracks(tracked);
-  }
+      // Preview crops so close neighbors are visible while waiting to lock.
+      if (numbered.length > 0) {
+        lastPersonCrops = personBoxesFromPoses(numbered);
+      } else {
+        lastPersonCrops = [];
+      }
 
-  for (const t of tracked) {
-    if (!countLock.locked) continue;
-    if (!indexByTrackId.has(t.trackId)) continue;
-    t.debouncer.update(
-      isHandRaised(t.landmarks, {
-        margin: 0.02,
-        minVisibility: 0.32,
-        maxWristFromShoulder: 0.58,
-        maxUpperArm: 0.48,
-        maxForearm: 0.48,
-        minElbowDeg: 20,
-        maxElbowDeg: 170,
-        otherLandmarks: tracked.filter((o) => o.trackId !== t.trackId).map((o) => o.landmarks),
-      }),
-    );
-  }
+      const observed = observePersonCount(countLock, liveCount, {
+        expectedCount: expected,
+        minStableFrames: LOCK_STABLE_FRAMES,
+      });
+      countLock = observed.state;
+      renderHud(liveCount, [], null, false);
+      drawOverlay([], null, false, preview);
 
-  const payload = lastNumberedFaces.map((f) => ({
-    id: f.index,
-    x: f.cx,
-    y: f.cy,
-  }));
-  const liveCount = payload.length;
-
-  if (!countLock.locked) {
-    const observed = observePersonCount(countLock, liveCount, {
-      expectedCount: expected,
-      minStableFrames: LOCK_STABLE_FRAMES,
-    });
-    countLock = observed.state;
-    renderHud(liveCount, [], null, false);
-    drawOverlay(tracked, [], null, false);
-
-    if (observed.shouldLock) {
-      setStatus(`千问已编号 ${expected} 人 · 正在锁定…`);
-      await lockNumbering(payload, tracked);
-    } else if (liveCount === expected) {
-      setStatus(`千问已编号 ${liveCount}/${expected} · 单人放大 Pose ${poses.length} · 正在锁定…`);
-    } else if (faceInFlight && liveCount === 0) {
-      setStatus(`千问正在识别人脸并编号（需要 ${expected} 人）…`);
-    } else {
-      setStatus(
-        `千问编号 ${liveCount}/${expected} · 单人放大 Pose ${poses.length}${
-          faceInFlight ? " · 识别中" : ""
-        }`,
-      );
+      if (observed.shouldLock && !lockInFlight && numbered.length >= expected) {
+        lockInFlight = true;
+        setStatus(`已检出 ${expected} 人 · 近距切开并锁定…`);
+        const take = numbered.slice(0, expected);
+        const boxes = personBoxesFromPoses(take);
+        const cascade = runMpOnPersonBoxes({
+          landmarker,
+          frameCanvas,
+          cropCanvas,
+          source: video,
+          boxes,
+        });
+        lastPersonCrops = cascade.boxes;
+        const refined = indexedPosesFromCascade(cascade.poses);
+        const byIndex = new Map(refined.map((p) => [p.index, p]));
+        const locked = take.map((p) => byIndex.get(p.index) ?? p);
+        lockNumbering(locked);
+        lockInFlight = false;
+      } else if (liveCount === expected) {
+        setStatus(
+          `本地编号 ${liveCount}/${expected} · 稳定 ${countLock.streak}/${LOCK_STABLE_FRAMES} · 近距自动切开`,
+        );
+      } else {
+        setStatus(`本地分割编号 ${liveCount}/${expected} · 需要 ${expected} 人后锁定 · 锁定前不检测举手`);
+      }
+      return;
     }
-    return;
-  }
 
-  // Locked: hand-raise + first-raise only (no Python sort).
-  const people = peopleFromLockedTracks(tracked);
-  const missing = numberingSlots.filter((s) => s.trackId == null).length;
-  const faceBound = countSlotsWithFace(numberingSlots);
-  race.update(
-    people.map((p) => ({ personIndex: p.index, raised: !!p.raised })),
-    nowMs,
-  );
-  const winner = race.winner;
+    // Locked: isolate close seats, zoom crop, single-person Pose, strict raise.
+    const boxes = personBoxesFromSeats(seatAnchors);
+    const cascade = runMpOnPersonBoxes({
+      landmarker,
+      frameCanvas,
+      cropCanvas,
+      source: video,
+      boxes,
+    });
+    lastPersonCrops = cascade.boxes;
+    const indexedPoses = indexedPosesFromCascade(cascade.poses);
+    seatAnchors = bindPosesToSeatsByIndex(seatAnchors, indexedPoses, {
+      maxMissed: TRACK_MAX_MISSED,
+    });
+    numberingSlots = seatsToNumberingSlots(seatAnchors);
+    updateSeatRaises(seatAnchors, nowMs);
 
-  renderHud(liveCount, people, winner, true);
-  drawOverlay(tracked, people, winner, true);
+    const people = peopleFromSeats(seatAnchors);
+    const liveSeats = people.filter((p) =>
+      seatAnchors.find((s) => s.index === p.index)?.landmarks,
+    ).length;
 
-  const raisedIndexes = people.filter((p) => p.raised).map((p) => p.index);
-  if (winner) {
-    setStatus(`最先举手：#${winner.personIndex} · 「下一轮」再赛 · 「重新编号」可重排`);
-  } else if (missing > 0) {
-    setStatus(
-      `编号已锁定 · 在场 ${people.length}/${lockedPeople.length} · 人脸绑座 ${faceBound} · 丢失者按人脸/位置找回`,
+    race.update(
+      seatAnchors.map((s) => {
+        const u = lastRaiseByIndex.get(s.index);
+        return {
+          personIndex: s.index,
+          raised: !!u?.raised,
+          score: u?.score ?? 0,
+          edgeAtMs: u?.edgeAtMs,
+        };
+      }),
+      nowMs,
     );
-  } else if (raisedIndexes.length === 0) {
-    setStatus(`编号已锁定 ${lockedPeople.length} 人 · 人脸绑座 ${faceBound} · 等待举手…`);
-  } else {
-    setStatus(`举手中：${raisedIndexes.map((n) => `#${n}`).join("、")}`);
-  }
+    const winner = race.winner;
+    renderHud(liveSeats, people, winner, true);
+    drawOverlay(people, winner, true);
+
+    const raisedIndexes = people.filter((p) => p.raised).map((p) => p.index);
+    const missed = seatAnchors.filter((s) => !s.fresh).length;
+    if (winner) {
+      setStatus(`最先举手：#${winner.personIndex} · 「下一轮」再赛 · 「重新编号」可重排`);
+    } else if (missed > 0) {
+      setStatus(`座位锁定 ${people.length} · 在场 ${liveSeats} · ${missed} 座短暂丢失`);
+    } else if (raisedIndexes.length === 0) {
+      setStatus(`座位锁定 ${people.length} 人 · 近距切开放大 · 严格举手判定 · 等待举手…`);
+    } else {
+      setStatus(`举手中：${raisedIndexes.map((n) => `#${n}`).join("、")}`);
+    }
   } finally {
     detectInFlight = false;
   }
@@ -577,47 +503,25 @@ async function loop(nowMs: number): Promise<void> {
 
 async function onStart(): Promise<void> {
   btnStart.disabled = true;
-  setStatus("连接千问并加载 Pose…");
+  setStatus("加载 MediaPipe Pose（多人 + 局部放大）…");
   try {
     await checkHealth();
-    try {
-      const faceSt = await fetchQwenFaceStatus();
-      qwenFaceOk = !!faceSt.configured;
-      if (qwenFaceOk) {
-        setApiStatus(true, `千问编号 · ${faceSt.model ?? "qwen-vl"}`);
-      } else {
-        setApiStatus(apiOk, "千问未配置 · 请在 python/data/api.env 填写 LLM_API_KEY");
-      }
-    } catch {
-      qwenFaceOk = false;
-      setApiStatus(apiOk, "无法读取千问状态 · 请先启动 python/server.py");
-    }
-    if (!qwenFaceOk) {
-      throw new Error("千问未就绪：请启动 Python API 并填写 LLM_API_KEY");
-    }
     landmarker = await createPoseLandmarker({
-      numPoses: 1,
+      numPoses: 6,
       runningMode: "IMAGE",
       modelAssetPath: FULL_MODEL_URL,
-      minPoseDetectionConfidence: 0.35,
-      minPosePresenceConfidence: 0.35,
-      minTrackingConfidence: 0.35,
+      minPoseDetectionConfidence: 0.4,
+      minPosePresenceConfidence: 0.4,
+      minTrackingConfidence: 0.4,
     });
     camera = await startCamera(video);
-    tracker = new PoseTracker({
-      matchDistance: TRACK_MATCH_DISTANCE,
-      matchYWeight: TRACK_MATCH_Y_WEIGHT,
-      maxMissed: TRACK_MAX_MISSED,
-      minFrames: 8,
-    });
     clearNumberingLock();
     lastTs = 0;
-    lastFaceTs = 0;
     canvasSized = false;
     btnStop.disabled = false;
     btnReset.disabled = false;
     btnRelock.disabled = false;
-    setStatus(`运行中 · 千问人脸编号 · 单人放大 Pose · 等待 ${readExpectedCount()} 人`);
+    setStatus(`运行中 · 本地分割编号 · 等待 ${readExpectedCount()} 人稳定后锁定`);
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame((t) => void loop(t));
   } catch (err) {
@@ -626,6 +530,8 @@ async function onStart(): Promise<void> {
     btnStart.disabled = false;
     landmarker?.close();
     landmarker = null;
+    camera?.stop();
+    camera = null;
   }
 }
 
@@ -635,8 +541,6 @@ function onStop(): void {
   camera = null;
   landmarker?.close();
   landmarker = null;
-  qwenFaceOk = false;
-  tracker.reset();
   clearNumberingLock();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   renderHud(0, [], null, false);
@@ -648,16 +552,17 @@ function onStop(): void {
 }
 
 function onResetRound(): void {
+  if (!countLock.locked) return;
   race.reset();
   lastUiKey = "";
   renderWinner(null);
-  publishClassroomEvent({ type: "race-reset", source: "people-fast" });
+  publishClassroomEvent({ type: "race-reset", source: BUS_SOURCE });
   setStatus("已重置本轮 · 编号保持 · 等待最先举手");
 }
 
 function onRelock(): void {
   clearNumberingLock();
-  setStatus(`已解除编号 · 等待千问重新识别 ${readExpectedCount()} 人`);
+  setStatus(`已解除编号 · 等待本地重新检出 ${readExpectedCount()} 人`);
 }
 
 btnStart.addEventListener("click", () => void onStart());
@@ -665,6 +570,3 @@ btnStop.addEventListener("click", onStop);
 btnReset.addEventListener("click", onResetRound);
 btnRelock.addEventListener("click", onRelock);
 void checkHealth();
-window.setInterval(() => {
-  if (!apiOk) void checkHealth();
-}, 2000);

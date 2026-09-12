@@ -1,10 +1,15 @@
 /**
- * Classroom raise signal: mid-shoulder reference + continuous score + edge timing.
- * Mid-shoulder is stabler than a single noisy shoulder point.
+ * Classroom raise signal on MediaPipe Pose joints + N-frame confirm + race timing.
+ *
+ * Pipeline:
+ *   MediaPipe Pose landmarks (EMA-smoothed) → isHandRaised / handsRaised
+ *   → RaiseDebouncer (default 1 frame = first hit) → FirstRaiseTracker score/edge.
  */
 
 import { RaiseDebouncer } from "./raiseDebouncer";
+import { emaBlendLandmarks } from "./landmarkSmooth";
 import {
+  handsRaised,
   POSE,
   type HandRaiseOptions,
   type PoseLandmark,
@@ -12,163 +17,108 @@ import {
 
 export type RaiseEval = {
   raised: boolean;
-  /** How far the winning wrist is above the shoulder midline (normalized). */
+  /** Wrist-above-shoulder clearance on the winning side (for race ties). */
   score: number;
   side: "left" | "right" | null;
 };
 
 export type SeatRaiseUpdate = {
-  /** Debounced flag for HUD / list. */
+  /** Debounced / N-frame-confirmed flag for HUD + first-raise race. */
   raised: boolean;
-  /** Instantaneous geometric raise (for race timing). */
+  /** Instantaneous MediaPipe joint raise. */
   rawRaised: boolean;
   score: number;
   side: "left" | "right" | null;
-  /** Interpolated clock when score crossed the raise threshold (rising edge only). */
+  /** Clock when confirmed raise first became true (rising edge). */
   edgeAtMs?: number;
 };
 
-function visibleEnough(lm: PoseLandmark | undefined, minV: number): lm is PoseLandmark {
-  return !!lm && (lm.visibility ?? 1) >= minV;
-}
+/** Default wrist-above-shoulder margin for classroom MediaPipe joints. */
+export const DEFAULT_RAISE_MARGIN = 0.02;
 
 function hypot2(ax: number, ay: number, bx: number, by: number): number {
   return Math.hypot(ax - bx, ay - by);
 }
 
-function torsoCenter(landmarks: readonly PoseLandmark[]): { x: number; y: number } {
-  const ls = landmarks[POSE.LEFT_SHOULDER];
-  const rs = landmarks[POSE.RIGHT_SHOULDER];
-  if (ls && rs) return { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
-  const nose = landmarks[POSE.NOSE];
-  return { x: nose?.x ?? 0.5, y: nose?.y ?? 0.5 };
-}
-
-/** Stable horizontal reference for "above the shoulders". */
-export function shoulderMidline(landmarks: readonly PoseLandmark[]): { x: number; y: number } | null {
-  const ls = landmarks[POSE.LEFT_SHOULDER];
-  const rs = landmarks[POSE.RIGHT_SHOULDER];
-  if (!ls || !rs) return null;
-  return { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
-}
-
-function wristCloserToNeighbor(
-  wrist: PoseLandmark,
-  selfTorso: { x: number; y: number },
-  others: readonly (readonly PoseLandmark[])[],
-): boolean {
-  const dSelf = hypot2(wrist.x, wrist.y, selfTorso.x, selfTorso.y);
-  for (const other of others) {
-    const t = torsoCenter(other);
-    if (hypot2(wrist.x, wrist.y, t.x, t.y) + 0.04 < dSelf) return true;
-  }
-  return false;
-}
-
-function sideScore(
+function sideClearance(
   landmarks: readonly PoseLandmark[],
   side: "left" | "right",
-  mid: { x: number; y: number },
-  options: {
-    margin: number;
-    minVisibility: number;
-    maxReach: number;
-    otherLandmarks: readonly (readonly PoseLandmark[])[];
-  },
+  margin: number,
 ): number {
   const shoulder = landmarks[side === "left" ? POSE.LEFT_SHOULDER : POSE.RIGHT_SHOULDER];
-  const wrist = landmarks[side === "left" ? POSE.LEFT_WRIST : POSE.RIGHT_WRIST];
   const opposite = landmarks[side === "left" ? POSE.RIGHT_SHOULDER : POSE.LEFT_SHOULDER];
-  const { margin, minVisibility, maxReach, otherLandmarks } = options;
-
-  if (!visibleEnough(wrist, minVisibility)) return 0;
-  // Prefer mid-shoulder; fall back to same-side if mid missing (caller guards).
-  const refY = mid.y;
-  const sameY = shoulder && visibleEnough(shoulder, minVisibility * 0.7) ? shoulder.y : refY;
-  // Blend: mostly midline, light same-side so a floating opposite shoulder doesn't dominate.
-  const baseline = refY * 0.65 + sameY * 0.35;
-
-  const height = baseline - wrist.y - margin;
-  if (height <= 0) return 0;
-
-  if (wristCloserToNeighbor(wrist, torsoCenter(landmarks), otherLandmarks)) return 0;
-
-  const anchor = shoulder && visibleEnough(shoulder, minVisibility * 0.5) ? shoulder : mid;
-  const reach = hypot2(anchor.x, anchor.y, wrist.x, wrist.y);
-  if (reach < 0.035 || reach > maxReach) return 0;
-
-  if (opposite && visibleEnough(opposite, minVisibility * 0.7)) {
-    if (side === "left" && wrist.x > opposite.x + 0.2) return 0;
-    if (side === "right" && wrist.x < opposite.x - 0.2) return 0;
-  }
-
-  // Nose gate: raised hand should reach near/above head line (rejects shrug).
-  const nose = landmarks[POSE.NOSE];
-  if (nose && visibleEnough(nose, minVisibility * 0.6)) {
-    if (wrist.y > nose.y + 0.12) return 0;
-  }
-
-  return height;
+  const wrist = landmarks[side === "left" ? POSE.LEFT_WRIST : POSE.RIGHT_WRIST];
+  if (!shoulder || !wrist) return 0;
+  const midY = opposite ? (shoulder.y + opposite.y) / 2 : shoulder.y;
+  const baseline = Math.min(midY, shoulder.y) * 0.55 + midY * 0.45;
+  return Math.max(0, baseline - wrist.y - margin);
 }
 
 /**
- * Continuous classroom raise evaluation (mid-shoulder based).
+ * Evaluate raise from MediaPipe Pose landmarks (joints 11–16 + nose).
  */
 export function evaluateHandRaise(
   landmarks: readonly PoseLandmark[],
   options: HandRaiseOptions = {},
 ): RaiseEval {
-  const margin = options.margin ?? 0.028;
-  const minVisibility = options.minVisibility ?? 0.22;
-  const maxReach = options.maxWristFromShoulder ?? 0.72;
-  const otherLandmarks = options.otherLandmarks ?? [];
-  const mid = shoulderMidline(landmarks);
-  if (!mid) return { raised: false, score: 0, side: null };
+  const margin = options.margin ?? DEFAULT_RAISE_MARGIN;
+  const opts: HandRaiseOptions = {
+    ...options,
+    classroom: true,
+    margin,
+    minVisibility: options.minVisibility ?? 0.2,
+    maxWristFromShoulder: options.maxWristFromShoulder ?? 0.72,
+  };
+  const hands = handsRaised(landmarks, opts);
+  const leftScore = hands.left ? Math.max(0.02, sideClearance(landmarks, "left", margin)) : 0;
+  const rightScore = hands.right ? Math.max(0.02, sideClearance(landmarks, "right", margin)) : 0;
 
-  const left = sideScore(landmarks, "left", mid, {
-    margin,
-    minVisibility,
-    maxReach,
-    otherLandmarks,
-  });
-  const right = sideScore(landmarks, "right", mid, {
-    margin,
-    minVisibility,
-    maxReach,
-    otherLandmarks,
-  });
-  if (left <= 0 && right <= 0) return { raised: false, score: 0, side: null };
-  if (left >= right) return { raised: true, score: left, side: "left" };
-  return { raised: true, score: right, side: "right" };
+  if (!hands.left && !hands.right) return { raised: false, score: 0, side: null };
+  if (leftScore >= rightScore && hands.left) {
+    return { raised: true, score: leftScore, side: "left" };
+  }
+  if (hands.right) return { raised: true, score: rightScore, side: "right" };
+  return { raised: true, score: leftScore, side: "left" };
 }
 
 export type SeatRaiseTrackerOptions = {
+  /**
+   * Consecutive frames required to confirm / clear raised.
+   * Default 1: first frame that passes the raise predicate counts (race-friendly).
+   */
   minFrames?: number;
-  /** Score must exceed this to count as raised. */
+  /** Instantaneous score must exceed this to count as a raw hit. */
   scoreThreshold?: number;
+  /** EMA alpha for pose-assisted landmark smoothing (0 = off). */
+  smoothAlpha?: number;
   raiseOptions?: HandRaiseOptions;
 };
 
 /**
- * Per-seat raise state: debounced HUD flag + interpolated rising-edge time for races.
+ * Per-seat raise: EMA pose smooth → MediaPipe joint raise → optional N-frame confirm.
+ * With minFrames=1, the first qualifying frame is raised + race edge.
  */
 export class SeatRaiseTracker {
   private readonly debouncer: RaiseDebouncer;
   private readonly scoreThreshold: number;
   private readonly raiseOptions: HandRaiseOptions;
-  private prevScore = 0;
-  private prevMs = 0;
+  private readonly smoothAlpha: number;
+  private prevConfirmed = false;
+  private confirmStreakStartMs = 0;
+  private smoothed: PoseLandmark[] | null = null;
 
   constructor(options: SeatRaiseTrackerOptions = {}) {
     this.debouncer = new RaiseDebouncer({ minFrames: options.minFrames ?? 1 });
-    this.scoreThreshold = options.scoreThreshold ?? 0.014;
-    this.raiseOptions = options.raiseOptions ?? {};
+    this.scoreThreshold = options.scoreThreshold ?? 0.01;
+    this.raiseOptions = { classroom: true, ...(options.raiseOptions ?? {}) };
+    this.smoothAlpha = options.smoothAlpha ?? 0.45;
   }
 
   reset(): void {
     this.debouncer.reset();
-    this.prevScore = 0;
-    this.prevMs = 0;
+    this.prevConfirmed = false;
+    this.confirmStreakStartMs = 0;
+    this.smoothed = null;
   }
 
   update(
@@ -178,28 +128,86 @@ export class SeatRaiseTracker {
   ): SeatRaiseUpdate {
     if (!landmarks) {
       this.debouncer.update(false);
-      this.prevScore = 0;
-      this.prevMs = nowMs;
+      this.prevConfirmed = false;
+      this.confirmStreakStartMs = 0;
+      this.smoothed = null;
       return { raised: false, rawRaised: false, score: 0, side: null };
     }
 
-    const ev = evaluateHandRaise(landmarks, {
+    const pose =
+      this.smoothAlpha > 0
+        ? emaBlendLandmarks(this.smoothed, landmarks, this.smoothAlpha)
+        : landmarks.map((p) => ({ ...p }));
+    this.smoothed = pose;
+
+    const ev = evaluateHandRaise(pose, {
       ...this.raiseOptions,
+      classroom: true,
       otherLandmarks,
     });
-    const rawRaised = ev.score >= this.scoreThreshold;
+    const rawRaised = ev.raised && ev.score >= this.scoreThreshold;
+
+    if (rawRaised && this.confirmStreakStartMs === 0) {
+      this.confirmStreakStartMs = nowMs;
+    } else if (!rawRaised) {
+      this.confirmStreakStartMs = 0;
+    }
+
     const raised = this.debouncer.update(rawRaised);
 
     let edgeAtMs: number | undefined;
-    if (rawRaised && this.prevScore < this.scoreThreshold && ev.score >= this.scoreThreshold) {
-      const span = Math.max(1e-3, nowMs - this.prevMs);
-      const t =
-        (this.scoreThreshold - this.prevScore) / Math.max(1e-6, ev.score - this.prevScore);
-      edgeAtMs = this.prevMs + Math.min(1, Math.max(0, t)) * span;
+    if (raised && !this.prevConfirmed) {
+      edgeAtMs = this.confirmStreakStartMs || nowMs;
     }
 
-    this.prevScore = ev.score;
-    this.prevMs = nowMs;
+    this.prevConfirmed = raised;
     return { raised, rawRaised, score: ev.score, side: ev.side, edgeAtMs };
   }
+}
+
+/** @deprecated kept for older imports; use evaluateHandRaise / isHandRaised. */
+export function shoulderMidline(landmarks: readonly PoseLandmark[]): { x: number; y: number } | null {
+  const ls = landmarks[POSE.LEFT_SHOULDER];
+  const rs = landmarks[POSE.RIGHT_SHOULDER];
+  if (!ls || !rs) return null;
+  return { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
+}
+
+export function isArmVertical(
+  shoulder: PoseLandmark,
+  _elbow: PoseLandmark | undefined,
+  wrist: PoseLandmark,
+): boolean {
+  void _elbow;
+  const rise = shoulder.y - wrist.y;
+  if (rise < 0.05) return false;
+  const dx = Math.abs(wrist.x - shoulder.x);
+  return dx / rise <= 0.5;
+}
+
+export function isCompactHeadRaise(
+  shoulder: PoseLandmark,
+  _elbow: PoseLandmark | undefined,
+  wrist: PoseLandmark,
+  nose: PoseLandmark | undefined,
+): boolean {
+  void _elbow;
+  if (!nose) return false;
+  if (wrist.y > shoulder.y + 0.02) return false;
+  if (wrist.y > nose.y + 0.12) return false;
+  return hypot2(wrist.x, wrist.y, nose.x, nose.y) <= 0.2;
+}
+
+export function isLateralArmNotRaise(
+  shoulder: PoseLandmark,
+  wrist: PoseLandmark,
+  nose: PoseLandmark | undefined,
+  side: "left" | "right",
+): boolean {
+  const headX = nose?.x ?? shoulder.x;
+  const outward =
+    side === "right" ? wrist.x - Math.max(shoulder.x, headX) : Math.min(shoulder.x, headX) - wrist.x;
+  if (outward <= 0.08) return false;
+  const headLine = nose ? nose.y + 0.06 : shoulder.y - 0.06;
+  return wrist.y > headLine;
 }
