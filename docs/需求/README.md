@@ -70,18 +70,16 @@
 - [x] 短暂丢检后尽量保持原号（人脸绑座 + 座位槽位）  
 - [x] 不内置计分  
 
-对照页（每帧排序）：`people.html` / `start-people.bat`。
-
 ### 3.4 计分板（`scoreboard.html` · 仅展示）
 
-与视觉 / 语音**分页独立**；同源标签页通过 `BroadcastChannel`（`classroomBus`）互通。
+与视觉 / 语音**分页独立**；同源标签页通过 `BroadcastChannel`（`classroomBus`）互通。各页**单独启动**。
 
 | 行为 | 说明 |
 |------|------|
 | 大字编号 | 视觉页锁定后同步座位，显示 `#N` 与积分 |
 | 最先举手 | 对应编号 **持续闪烁**（不停） |
 | 语音答对 | 该号积分 **+1**，停止闪烁；视觉页点「下一轮」后再赛 |
-| 启动 | `start-scoreboard.bat` → 计分板 + 视觉快版 + 语音页 |
+| 启动 | `start-scoreboard.bat` 只开计分板；视觉 / 语音请另开对应脚本或标签 |
 
 ---
 
@@ -109,12 +107,6 @@
 - 启动：`start-speech-online.bat`  
 - 换机配置：[`docs/SETUP-speech-v2.md`](../SETUP-speech-v2.md)
 
-### 4.3 V1.0 路径（离线对照）
-
-- 按下录音 → 上传 → 本机 **faster-whisper** 转写 → rapidfuzz 匹配  
-- 页面：http://localhost:5173/speech.html  
-- 启动：`start-speech.bat`
-
 ---
 
 ## 5. 非功能需求
@@ -139,8 +131,7 @@
 | 左→右编号 | 躯干 x 排序；Python FastAPI 排序 API；快版锁定一次 |
 | 编号防丢 | 锁定时千问 VL 建会话模板；人在场不再轮询；丢座位后最多每秒补检，优先人脸再位置找回**原号** |
 | 谁先举手 | 本人弯臂（左右独立）+ 连续帧防抖 + FirstRaise 上升沿竞态 |
-| 离线语音 | faster-whisper + rapidfuzz |
-| 在线语音 | Web Speech + pypinyin + DeepSeek 语义 |
+| 在线语音 | Web Speech + pypinyin + 线上语义（LLM） |
 | 前后端联通 | Vite + TypeScript；Python FastAPI / Uvicorn `:8765` |
 
 更细的栈说明见仓库根目录 [`README.md`](../../README.md)。
@@ -153,9 +144,8 @@
 |------|------|------|
 | **视频解析 V1.0** | 人物编号快版满足锁定编号 + 举手竞态 | 已定稿 |
 | **语音识别 V2.0** | 在线实时听写 + 语义 + 限时 | 已满足本轮测试 |
-| 语音 V1.0 | 离线 Whisper 路径 | 保留作对照 |
 
-后续大改应升小版本，并在根 `README.md` 版本记录中追加，避免破坏 V1.0 / V2.0 主路径。
+后续大改应升小版本，并在根 `README.md` 中追加，避免破坏视觉 V1.0 / 语音 V2.0 主路径。
 
 ---
 

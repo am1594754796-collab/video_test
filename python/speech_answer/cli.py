@@ -1,7 +1,7 @@
-"""CLI: offline listen-and-match demo.
+"""CLI: text match against answer bank (debug / smoke).
 
 Usage (paths relative to python/):
-  python -m speech_answer.cli --answers data/answers.json --question Q3 --text 绿色植物在光下把水和二氧化碳变成有机物并放出氧气
+  python -m speech_answer.cli --answers data/answers.json --question Q1 --text 北京
 """
 
 from __future__ import annotations
@@ -11,38 +11,28 @@ import json
 import sys
 
 from speech_answer.answer_bank import AnswerBank
-from speech_answer.match_service import listen_and_match, match_text
+from speech_answer.match_service import match_text
 from speech_answer.paths import DEFAULT_ANSWERS_RELATIVE, resolve_answers_path
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Speech answer match (offline ZH)")
+    parser = argparse.ArgumentParser(description="Speech answer match (text)")
     parser.add_argument(
         "--answers",
         default=DEFAULT_ANSWERS_RELATIVE,
         help=f"Answer bank JSON path relative to python/ (default: {DEFAULT_ANSWERS_RELATIVE})",
     )
     parser.add_argument("--question", required=True, help="External question id")
-    parser.add_argument("--seconds", type=float, default=5.0, help="Mic record length")
-    parser.add_argument("--model", default="base", help="faster-whisper model size")
     parser.add_argument(
         "--text",
-        default=None,
-        help="Skip mic/ASR; match this transcript directly (debug)",
+        required=True,
+        help="Transcript to match against the question's answer",
     )
     args = parser.parse_args(argv)
 
     answers_file = resolve_answers_path(args.answers)
     bank = AnswerBank.load(answers_file)
-    if args.text is not None:
-        result = match_text(bank, args.question, args.text)
-    else:
-        result = listen_and_match(
-            bank,
-            args.question,
-            seconds=args.seconds,
-            model_size=args.model,
-        )
+    result = match_text(bank, args.question, args.text)
 
     payload = {
         "question_id": result.question_id,

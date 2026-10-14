@@ -12,19 +12,17 @@ Answer bank path (relative to python/):
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import httpx
 
 from sort_people import sort_people_left_to_right
 from speech_answer.answer_bank import AnswerBank, UnknownQuestionIdError
-from speech_answer.asr import WhisperAsr
-from speech_answer.match_service import match_audio_file, match_text
+from speech_answer.match_service import match_text
 from speech_answer.envfile import load_env_file
 from speech_answer.paths import (
     DEFAULT_ANSWERS_RELATIVE,
@@ -52,10 +50,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_WHISPER_MODEL = os.environ.get("SPEECH_WHISPER_MODEL", "base")
-
 _bank: AnswerBank | None = None
-_asr: WhisperAsr | None = None
 _active_path: Path | None = None
 _active_relative: str = DEFAULT_ANSWERS_RELATIVE
 
@@ -94,13 +89,6 @@ def get_bank() -> AnswerBank:
             raise HTTPException(status_code=500, detail=f"failed to load answer bank: {exc}") from exc
     assert _bank is not None
     return _bank
-
-
-def get_asr() -> WhisperAsr:
-    global _asr
-    if _asr is None:
-        _asr = WhisperAsr(model_size=_WHISPER_MODEL)
-    return _asr
 
 
 def _bank_payload() -> dict[str, Any]:
@@ -253,45 +241,6 @@ def speech_match_text(body: MatchTextRequest) -> dict[str, Any]:
         result = match_text(get_bank(), body.question_id, body.transcript)
     except UnknownQuestionIdError as exc:
         raise HTTPException(status_code=404, detail=f"unknown question_id: {exc.args[0]}") from exc
-    return _match_payload(result)
-
-
-@app.post("/api/speech/match")
-async def speech_match(
-    question_id: str = Form(...),
-    audio: UploadFile = File(...),
-) -> dict[str, Any]:
-    bank = get_bank()
-    try:
-        bank.get_answer(question_id)
-    except UnknownQuestionIdError as exc:
-        raise HTTPException(status_code=404, detail=f"unknown question_id: {exc.args[0]}") from exc
-
-    suffix = Path(audio.filename or "clip.webm").suffix or ".webm"
-    raw = await audio.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="empty audio upload")
-
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(raw)
-        tmp_path = Path(tmp.name)
-
-    try:
-        asr = get_asr()
-        result = match_audio_file(
-            bank,
-            question_id,
-            tmp_path,
-            transcribe_fn=asr.transcribe_zh,
-        )
-    except Exception as exc:  # noqa: BLE001 — surface ASR failures to client
-        raise HTTPException(status_code=500, detail=f"asr failed: {exc}") from exc
-    finally:
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-
     return _match_payload(result)
 
 

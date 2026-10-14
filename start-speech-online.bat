@@ -4,8 +4,8 @@ setlocal
 cd /d "%~dp0"
 
 echo ========================================
-echo  语音作答 · 在线识别 - 一键启动
-echo  ^(Web Speech 听写 + Python 匹配^)
+echo  语音作答 · 在线识别（单独启动）
+echo  Vite + Python · 仅打开本页
 echo ========================================
 echo.
 
@@ -38,10 +38,10 @@ if not exist "python\.venv\" (
 
 echo.
 echo 答案库相对路径: 见 python\data\answers.path （默认 data/answers.json）
-if exist "python\data\online.env" (
-  echo 线上语义: 已检测到 python\data\online.env
+if exist "python\data\api.env" (
+  echo 线上语义: 已检测到 python\data\api.env
 ) else (
-  echo 线上语义: 复制 python\data\online.env.example 为 online.env 并填入 SPEECH_LLM_API_KEY
+  echo 线上语义: 复制 deploy\api.env.example 为 python\data\api.env 并填入 LLM_API_KEY
 )
 call "%~dp0start-python-api.bat"
 if errorlevel 1 (
@@ -52,7 +52,7 @@ if errorlevel 1 (
 timeout /t 3 /nobreak >nul
 
 echo 启动网页 : http://localhost:5173/speech-online.html
-echo 提示: 需联网；请用 Chrome / Edge
+echo 提示: 需联网；请用 Chrome / Edge；不要同时开多个 start-*.bat
 start "" "http://localhost:5173/speech-online.html"
 call npm.cmd run dev
 

@@ -1,9 +1,8 @@
 # Spec: 口头作答 — 语音识别与答案匹配（Speech Answer Match）
 
-> **Status:** **定稿 / Approved** — 2026-08-08（用户确认假设并定稿）  
-> **模块定位：** 系统的 **Python 语音识别与答案匹配** 部分。  
-> 职责边界：麦克风取音 → 离线中文 ASR → 按外部给定的 `question_id` 取唯一标准答案 → 模糊匹配（≥ 90%）→ 返回结构化结果。  
-> **不包含** 选题、计分、抢答流程、浏览器识别。
+> **Status:** **部分退役** — 离线 Whisper 网页与 `/api/speech/match` 音频路径已移除（2026-10）。  
+> **当前交付：** 浏览器 Web Speech 在线听写 → `POST /api/speech/match-text`（字形/拼音/语义匹配 ≥ 90%）。见 `speech-online.html`、`docs/SETUP-speech-v2.md`。  
+> 下文保留为历史定稿（原离线 ASR 方案），仅作背景；实现以在线路径为准。
 
 ## Objective
 

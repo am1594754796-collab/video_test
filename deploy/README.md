@@ -59,14 +59,15 @@ LLM_API_KEY=你的阿里云 DashScope 密钥
 
 ## 4. 启动脚本速查
 
+每个脚本**只打开对应一个页面**；不要同时开多个 bat（抢 `5173`）。已有 Vite 时，其它页用浏览器标签打开即可。
+
 | 脚本 | 功能 |
 |------|------|
+| `start.bat` | 单人举手调试 |
 | `start-people-fast.bat` | 视觉 · 相机 |
 | `start-people-video.bat` | 视觉 · 本地视频 |
-| `start-speech-online.bat` | 语音 · 在线听写 |
-| `start-scoreboard.bat` | 计分板三页 |
-
-不要同时开多个 bat（端口冲突）。
+| `start-speech-online.bat` | 语音 · 在线听写（含 Python） |
+| `start-scoreboard.bat` | 计分板（仅本页） |
 
 ---
 
