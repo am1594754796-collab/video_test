@@ -5,7 +5,7 @@
 | 页面 | 地址 | 启动 | 需要 |
 |------|------|------|------|
 | 举手单人调试 | http://localhost:5173/ | `start.bat` | Node.js |
-| **人物编号 · 视频回放检测** | http://localhost:5173/people-video.html | `start-people-video.bat` / `.sh` | **仅 Node.js** |
+| **人物编号 · 视频回放检测** | http://localhost:5173/people-video.html | `start-people-video.bat` | **仅 Node.js** |
 | **人物编号 · 相机快版** | http://localhost:5173/people-fast.html | `start-people-fast.bat` | **仅 Node.js** + 相机 |
 | **计分板（仅展示）** | http://localhost:5173/scoreboard.html | `start-scoreboard.bat` | 同域其它页即可 |
 | **语音作答 · 在线识别** | http://localhost:5173/speech-online.html | `start-speech-online.bat` | Node.js **+ Python** · 联网 · Chrome/Edge |
@@ -27,7 +27,7 @@
 | `5173` | Vite 前端（所有网页共用） |
 | `8765` | Python API（**仅语音作答**需要） |
 
-- **不要同时开多个** `start-*.bat` / `.sh`（会抢 `5173`）。
+- **不要同时开多个** `start-*.bat`（会抢 `5173`）。
 - 已有 Vite 在跑时：只需在浏览器**另开标签**访问其它页面地址。
 - 每个启动脚本**只打开自己的页面**；联调时自行打开其余标签。
 
@@ -53,15 +53,14 @@
 
 ### 一次性安装
 
-```bash
-npm install
+```bat
+npm.cmd install
 
-mkdir -p public/mediapipe
-# Linux / macOS：
-ln -sfn ../../node_modules/@mediapipe/tasks-vision/wasm public/mediapipe/wasm
+mkdir public\mediapipe 2>nul
+xcopy /E /I /Y node_modules\@mediapipe\tasks-vision\wasm public\mediapipe\wasm
 
-mkdir -p public/mediapipe/models
-curl -L -o public/mediapipe/models/pose_landmarker_full.task \
+mkdir public\mediapipe\models 2>nul
+curl -L -o public\mediapipe\models\pose_landmarker_full.task ^
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
 ```
 
@@ -69,9 +68,9 @@ curl -L -o public/mediapipe/models/pose_landmarker_full.task \
 
 ### 启动
 
-```bash
-npm run dev
-# 或双击对应 start-people-*.bat / ./start-people-video.sh
+```bat
+npm.cmd run dev
+REM 或双击对应 start-people-*.bat / start-people-video.bat
 ```
 
 | 用途 | 地址 |
@@ -128,7 +127,7 @@ copy deploy\api.env.example python\data\api.env
 |------|----------|
 | `start.bat` / `start.ps1` | 举手单人调试 `/` |
 | `start-people-fast.bat` | 相机多人检测 |
-| `start-people-video.bat` / `.sh` | 视频回放检测 |
+| `start-people-video.bat` | 视频回放检测 |
 | `start-scoreboard.bat` | 计分板 |
 | `start-speech-online.bat` | 语音在线（含 Python API） |
 | `start-python-api.bat` | 仅 Python API（8765） |
@@ -163,7 +162,7 @@ video_test/
   people-video.html          ← 视频回放
   scoreboard.html            ← 计分板
   speech-online.html         ← 语音在线
-  start-*.bat / .sh
+  start-*.bat / start.ps1
   public/mediapipe/          ← WASM + Pose 模型
   src/vision/                ← MediaPipe / 编号 / 举手
   src/app/                   ← 各页入口脚本

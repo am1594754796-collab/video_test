@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { POSE, type PoseLandmark } from "../../src/vision/detect/isHandRaised";
 import {
   bindPosesToLockedIndexes,
+  mergeCropPosesWithScout,
   numberPosesLeftToRight,
   personBoxFromLandmarks,
   personBoxesFromPoses,
@@ -70,5 +71,36 @@ describe("personSplit", () => {
       { index: 2, x: 0.5, y: 0.4 },
     ]);
     expect(boxes[0]!.xMax).toBeLessThanOrEqual(boxes[1]!.xMin + 0.001);
+  });
+
+  it("fills missing crop seats from a full-frame scout without renumbering", () => {
+    const seats = [
+      { index: 1, x: 0.2, y: 0.4 },
+      { index: 2, x: 0.5, y: 0.4 },
+      { index: 3, x: 0.8, y: 0.4 },
+    ];
+    const cropOnly = [
+      {
+        index: 1,
+        x: 0.21,
+        y: 0.4,
+        landmarks: person(0.21),
+      },
+      {
+        index: 3,
+        x: 0.79,
+        y: 0.4,
+        landmarks: person(0.79),
+      },
+    ];
+    const merged = mergeCropPosesWithScout(seats, cropOnly, [
+      { landmarks: person(0.5) },
+      { landmarks: person(0.22) },
+      { landmarks: person(0.81) },
+    ]);
+    expect(merged.map((p) => p.index).sort()).toEqual([1, 2, 3]);
+    expect(merged.find((p) => p.index === 2)!.x).toBeCloseTo(0.5, 1);
+    // Crop hit for #1 is kept (not overwritten by scout).
+    expect(merged.find((p) => p.index === 1)!.x).toBeCloseTo(0.21, 2);
   });
 });

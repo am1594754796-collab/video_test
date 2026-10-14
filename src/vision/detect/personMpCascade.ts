@@ -43,7 +43,8 @@ export function runMpOnPersonBoxes(opts: {
     return { boxes: [], poses: [] };
   }
   const poses = detectPosesFromPersonBoxes(landmarker, frameCanvas, cropCanvas, boxes, {
-    maxTorsoDist: 0.28,
+    // Slightly looser under harsh light (washed landmarks drift in crop).
+    maxTorsoDist: 0.36,
   });
   return { boxes: [...boxes], poses };
 }

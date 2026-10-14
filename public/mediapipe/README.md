@@ -6,14 +6,25 @@
 | `models/pose_landmarker_lite.task` | Single-person debug |
 | `models/pose_landmarker_full.task` | Multi-person / video (default) |
 
-Download models once (from a machine that can reach Google):
+## One-click (Windows)
 
-```bash
-mkdir -p public/mediapipe/models
-curl -L -o public/mediapipe/models/pose_landmarker_full.task \
-  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
-curl -L -o public/mediapipe/models/pose_landmarker_lite.task \
-  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+From repo root:
+
+```bat
+setup-mediapipe.bat
 ```
 
-WASM: copy or symlink from `node_modules/@mediapipe/tasks-vision/wasm` → `public/mediapipe/wasm`.
+`start-people-fast.bat` / other `start-*.bat` call this automatically via `_dev-open.bat`.
+
+`setup-mediapipe.bat` will:
+1. Replace a broken Linux `wasm` symlink file with a real directory copy
+2. Download full/lite `.task` models (HF mirror first; Google Storage as fallback)
+
+## Manual
+
+```bat
+npm.cmd install
+setup-mediapipe.bat
+```
+
+Models are gitignored (large binaries). Full model should be ~9MB; if the file is only tens of KB, delete it and re-run `setup-mediapipe.bat`.

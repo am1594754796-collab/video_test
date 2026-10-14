@@ -1,13 +1,14 @@
 /**
  * Single-person debug shell: stabilize hand-raise detection.
  * numPoses = 1 (no multi-person detector thrash).
+ * Uses the same classroom raise predicate as people-fast / people-video.
  */
 
 import { PoseLandmarker, type NormalizedLandmark } from "@mediapipe/tasks-vision";
 import {
   createPoseLandmarker,
   detectPosesForVideo,
-  isHandRaised,
+  evaluateHandRaise,
   RaiseDebouncer,
   startCamera,
   type CameraHandle,
@@ -25,7 +26,7 @@ const inputMargin = document.querySelector<HTMLInputElement>("#input-margin")!;
 const inputFrames = document.querySelector<HTMLInputElement>("#input-frames")!;
 
 /** EMA smoothing factor for landmarks (0=no smooth, closer to 1=heavier). */
-const SMOOTH = 0.55;
+const SMOOTH = 0.35;
 /** Keep drawing last pose if detection drops briefly. */
 const HOLD_MS = 250;
 
@@ -33,18 +34,20 @@ let camera: CameraHandle | null = null;
 let landmarker: PoseLandmarker | null = null;
 let raf = 0;
 let lastTs = 0;
-let debouncer = new RaiseDebouncer({ minFrames: 8 });
+let debouncer = new RaiseDebouncer({ minFrames: 3 });
 let smoothed: NormalizedLandmark[] | null = null;
 let lastPoseAt = 0;
 let lastShownRaised: boolean | null = null;
 let canvasSized = false;
 
 function readMargin(): number {
-  return Number(inputMargin.value) || 0.04;
+  const n = Number(inputMargin.value);
+  return Number.isFinite(n) ? n : 0.025;
 }
 
 function readMinFrames(): number {
-  return Math.max(1, Number(inputFrames.value) || 8);
+  const n = Number(inputFrames.value);
+  return Math.max(1, Number.isFinite(n) ? n : 3);
 }
 
 function setStatus(text: string): void {
@@ -137,15 +140,18 @@ function loop(nowMs: number): void {
   if (poses.length > 0) {
     lastPoseAt = nowMs;
     const landmarks = smoothLandmarks(poses[0].landmarks);
-    const raised = debouncer.update(
-      isHandRaised(landmarks, {
-        margin,
-        otherLandmarks: poses.slice(1).map((p) => p.landmarks),
-      }),
-    );
+    const ev = evaluateHandRaise(landmarks, {
+      margin,
+      minVisibility: 0.25,
+      otherLandmarks: poses.slice(1).map((p) => p.landmarks),
+    });
+    const raised = debouncer.update(ev.raised && ev.score >= 0.01);
     drawPose(landmarks, raised);
     setRaisedUi(raised);
-    setStatus(`单人调试 · 已锁定 · margin=${margin} · minFrames=${readMinFrames()}`);
+    const side = ev.side ?? "-";
+    setStatus(
+      `单人调试 · ${raised ? "举手" : "未举手"} · side=${side} · score=${ev.score.toFixed(3)} · margin=${margin} · minFrames=${readMinFrames()}`,
+    );
     return;
   }
 
@@ -181,7 +187,7 @@ async function onStart(): Promise<void> {
     lastShownRaised = null;
     canvasSized = false;
     btnStop.disabled = false;
-    setStatus("单人调试运行中");
+    setStatus("单人调试运行中 · 请把手举过肩/贴近头部（与多人页同一套判定）");
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(loop);
   } catch (err) {

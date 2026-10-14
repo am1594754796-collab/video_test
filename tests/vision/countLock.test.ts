@@ -30,6 +30,34 @@ describe("observePersonCount", () => {
     expect(again.state.streak).toBe(1);
   });
 
+  it("keeps streak across brief under-count gaps when maxGapFrames is set", () => {
+    let state = createCountLockState();
+    const opts = { expectedCount: 6, minStableFrames: 4, maxGapFrames: 2 };
+    state = observePersonCount(state, 6, opts).state;
+    state = observePersonCount(state, 6, opts).state;
+    expect(state.streak).toBe(2);
+    // Lighting flicker: one person briefly missing.
+    state = observePersonCount(state, 5, opts).state;
+    expect(state.streak).toBe(2);
+    expect(state.gapFrames).toBe(1);
+    state = observePersonCount(state, 6, opts).state;
+    expect(state.streak).toBe(3);
+    expect(state.gapFrames).toBe(0);
+    const locked = observePersonCount(state, 6, opts);
+    expect(locked.shouldLock).toBe(true);
+  });
+
+  it("still resets when gap exceeds maxGapFrames", () => {
+    let state = createCountLockState();
+    const opts = { expectedCount: 6, minStableFrames: 3, maxGapFrames: 1 };
+    state = observePersonCount(state, 6, opts).state;
+    state = observePersonCount(state, 6, opts).state;
+    state = observePersonCount(state, 5, opts).state; // gap 1 — keep
+    expect(state.streak).toBe(2);
+    state = observePersonCount(state, 5, opts).state; // gap 2 — reset
+    expect(state.streak).toBe(0);
+  });
+
   it("does not lock again after already locked", () => {
     let state = createCountLockState();
     for (let i = 0; i < 3; i++) {

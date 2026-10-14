@@ -28,10 +28,14 @@ export const FULL_MODEL_URL = "/mediapipe/models/pose_landmarker_full.task";
  */
 export const HEAVY_MODEL_URL = "/mediapipe/models/pose_landmarker_heavy.task";
 
-/** Remote fallbacks (used only if you intentionally pass these paths). */
+/** Remote fallbacks when local `public/mediapipe/models` is missing (prefer CN-reachable mirrors). */
 export const REMOTE_LITE_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 export const REMOTE_FULL_MODEL_URL =
+  "https://hf-mirror.com/spaces/pollen-robotics/red_light_green_light/resolve/main/red_light_green_light/pose_landmarker_full.task";
+export const REMOTE_FULL_MODEL_URL_HF =
+  "https://huggingface.co/spaces/pollen-robotics/red_light_green_light/resolve/main/red_light_green_light/pose_landmarker_full.task";
+export const REMOTE_FULL_MODEL_URL_GCS =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task";
 export const REMOTE_HEAVY_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task";
@@ -63,21 +67,81 @@ const DEFAULT_BANDS: BandCrop[] = [
   { x0: 0.45, x1: 1 },
 ];
 
-export async function createPoseLandmarker(
-  config: PoseLandmarkerConfig = {},
+/**
+ * Extra side/center strips for numbering under uneven / harsh light
+ * (window glare often kills one side of a full-frame detect).
+ */
+export const NUMBERING_SCOUT_BANDS: BandCrop[] = [
+  { x0: 0, x1: 1 },
+  { x0: 0, x1: 0.55 },
+  { x0: 0.45, x1: 1 },
+  { x0: 0, x1: 0.4 },
+  { x0: 0.3, x1: 0.7 },
+  { x0: 0.6, x1: 1 },
+];
+
+const MIN_LOCAL_MODEL_BYTES = 1_000_000;
+
+function remoteFallbacksFor(modelAssetPath: string): string[] {
+  if (modelAssetPath.includes("pose_landmarker_full")) {
+    return [REMOTE_FULL_MODEL_URL, REMOTE_FULL_MODEL_URL_HF, REMOTE_FULL_MODEL_URL_GCS];
+  }
+  if (modelAssetPath.includes("pose_landmarker_lite")) return [REMOTE_LITE_MODEL_URL];
+  if (modelAssetPath.includes("pose_landmarker_heavy")) return [REMOTE_HEAVY_MODEL_URL];
+  return [];
+}
+
+async function localModelLooksReady(url: string): Promise<boolean> {
+  try {
+    const head = await fetch(url, { method: "HEAD", cache: "no-store" });
+    if (head.ok) {
+      const len = Number(head.headers.get("content-length") || 0);
+      if (len >= MIN_LOCAL_MODEL_BYTES) return true;
+      if (len > 0) return false;
+    }
+  } catch {
+    /* some hosts ignore HEAD — probe with a tiny range GET */
+  }
+  try {
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: { Range: "bytes=0-0" },
+    });
+    if (!(res.ok || res.status === 206)) return false;
+    const cr = res.headers.get("content-range"); // e.g. bytes 0-0/9177000
+    const total = cr?.split("/")[1];
+    if (total && total !== "*") return Number(total) >= MIN_LOCAL_MODEL_BYTES;
+    const len = Number(res.headers.get("content-length") || 0);
+    return len >= MIN_LOCAL_MODEL_BYTES;
+  } catch {
+    return false;
+  }
+}
+
+/** Prefer local vendored model; otherwise first remote mirror (browser will fetch). */
+async function resolveModelAssetPath(preferred: string): Promise<string> {
+  if (/^https?:\/\//i.test(preferred)) return preferred;
+  if (await localModelLooksReady(preferred)) return preferred;
+  const remotes = remoteFallbacksFor(preferred);
+  if (remotes.length === 0) {
+    throw new Error(
+      `MediaPipe 模型不可用: ${preferred}。请运行 setup-mediapipe.bat 下载模型。`,
+    );
+  }
+  return remotes[0]!;
+}
+
+async function createWithDelegate(
+  vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>,
+  shared: {
+    runningMode: "VIDEO" | "IMAGE";
+    numPoses: number;
+    minPoseDetectionConfidence: number;
+    minPosePresenceConfidence: number;
+    minTrackingConfidence: number;
+  },
+  modelAssetPath: string,
 ): Promise<PoseLandmarker> {
-  const vision = await FilesetResolver.forVisionTasks(config.wasmRoot ?? DEFAULT_WASM_ROOT);
-
-  const shared = {
-    runningMode: (config.runningMode ?? "VIDEO") as "VIDEO" | "IMAGE",
-    numPoses: config.numPoses ?? 6,
-    minPoseDetectionConfidence: config.minPoseDetectionConfidence ?? 0.65,
-    minPosePresenceConfidence: config.minPosePresenceConfidence ?? 0.65,
-    minTrackingConfidence: config.minTrackingConfidence ?? 0.6,
-  };
-
-  const modelAssetPath = config.modelAssetPath ?? DEFAULT_MODEL_URL;
-
   try {
     return await PoseLandmarker.createFromOptions(vision, {
       ...shared,
@@ -88,6 +152,41 @@ export async function createPoseLandmarker(
       ...shared,
       baseOptions: { modelAssetPath, delegate: "CPU" },
     });
+  }
+}
+
+export async function createPoseLandmarker(
+  config: PoseLandmarkerConfig = {},
+): Promise<PoseLandmarker> {
+  const wasmRoot = config.wasmRoot ?? DEFAULT_WASM_ROOT;
+  let vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>;
+  try {
+    vision = await FilesetResolver.forVisionTasks(wasmRoot);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `MediaPipe WASM 加载失败 (${wasmRoot})。请运行 setup-mediapipe.bat。${detail}`,
+    );
+  }
+
+  const shared = {
+    runningMode: (config.runningMode ?? "VIDEO") as "VIDEO" | "IMAGE",
+    numPoses: config.numPoses ?? 6,
+    minPoseDetectionConfidence: config.minPoseDetectionConfidence ?? 0.65,
+    minPosePresenceConfidence: config.minPosePresenceConfidence ?? 0.65,
+    minTrackingConfidence: config.minTrackingConfidence ?? 0.6,
+  };
+
+  const preferred = config.modelAssetPath ?? DEFAULT_MODEL_URL;
+  const modelAssetPath = await resolveModelAssetPath(preferred);
+
+  try {
+    return await createWithDelegate(vision, shared, modelAssetPath);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `MediaPipe Pose 模型加载失败。请运行 setup-mediapipe.bat 或检查网络。${detail}`,
+    );
   }
 }
 

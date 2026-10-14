@@ -20,6 +20,12 @@ export {
   type CountLockSnapshot,
 } from "./detect/countLock";
 export {
+  createScoutHoldState,
+  stabilizeScoutPoses,
+  type ScoutHoldState,
+  type StabilizeScoutOptions,
+} from "./detect/scoutHold";
+export {
   slotsFromSort,
   rebindSlotsToTracks,
   shouldRefreshCloudFaces,
@@ -51,6 +57,7 @@ export {
   FULL_MODEL_URL,
   HEAVY_MODEL_URL,
   DEFAULT_WASM_ROOT,
+  NUMBERING_SCOUT_BANDS,
   REMOTE_LITE_MODEL_URL,
   REMOTE_FULL_MODEL_URL,
   REMOTE_HEAVY_MODEL_URL,
@@ -81,6 +88,7 @@ export {
   personBoxesFromPoses,
   personBoxesFromSeats,
   bindPosesToLockedIndexes,
+  mergeCropPosesWithScout,
   type IndexedPose,
 } from "./detect/personSplit";
 export {

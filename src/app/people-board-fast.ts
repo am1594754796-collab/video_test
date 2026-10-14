@@ -9,11 +9,14 @@ import {
   bindPosesToSeatsByIndex,
   createCountLockState,
   createPoseLandmarker,
+  createScoutHoldState,
   createSeatAnchors,
   dedupePosesByTorso,
   detectPosesMultiBand,
   FirstRaiseTracker,
   FULL_MODEL_URL,
+  mergeCropPosesWithScout,
+  NUMBERING_SCOUT_BANDS,
   numberPosesLeftToRight,
   observePersonCount,
   personBoxesFromPoses,
@@ -22,6 +25,7 @@ import {
   SeatRaiseTracker,
   seatsToNumberingSlots,
   slotsFromSort,
+  stabilizeScoutPoses,
   startCamera,
   torsoCenter,
   unlockCountLock,
@@ -30,7 +34,9 @@ import {
   type FirstRaiseEvent,
   type NumberingSlot,
   type PersonBox,
+  type PoseFrame,
   type PoseLandmark,
+  type ScoutHoldState,
   type SeatAnchor,
   type SeatRaiseUpdate,
 } from "../vision";
@@ -40,13 +46,18 @@ import { publishClassroomEvent } from "./classroomBus";
 const DETECT_INTERVAL_MS = 20;
 const DETECT_INTERVAL_LOCKED_MS = 16;
 /** Consecutive frames at expected count before lock. */
-const LOCK_STABLE_FRAMES = 3;
+const LOCK_STABLE_FRAMES = 4;
+/** Allow brief under-count frames (harsh light flicker) without resetting streak. */
+const LOCK_GAP_FRAMES = 2;
+/** Keep last full scout briefly when light drops a person for 1–2 frames. */
+const SCOUT_HOLD_MS = 380;
 /** Strict MediaPipe joint raise — first frame that passes counts. */
 const RAISE_MARGIN = 0.025;
 const RAISE_MIN_VISIBILITY = 0.25;
 const RAISE_MIN_FRAMES = 1;
 const RAISE_SCORE_THRESHOLD = 0.015;
-const TRACK_MAX_MISSED = 10;
+/** Hold last pose ~0.8s at locked cadence before clearing (bright-light flicker). */
+const TRACK_MAX_MISSED = 48;
 const BUS_SOURCE = "people-fast";
 
 const frameCanvas = document.createElement("canvas");
@@ -91,6 +102,7 @@ let seatAnchors: SeatAnchor[] = [];
 let seatRaiseByIndex = new Map<number, SeatRaiseTracker>();
 let lastRaiseByIndex = new Map<number, SeatRaiseUpdate>();
 let lockedPeople: SortedPerson[] = [];
+let scoutHold: ScoutHoldState<PoseFrame> = createScoutHoldState();
 let detectInFlight = false;
 let lockInFlight = false;
 let lastUiKey = "";
@@ -138,14 +150,31 @@ async function checkHealth(): Promise<boolean> {
   }
 }
 
-function scoutPoses() {
+function scoutPosesRaw() {
   if (!landmarker) return [];
-  const raw = detectPosesMultiBand(landmarker, video, frameCanvas, bandCanvas);
+  const raw = detectPosesMultiBand(
+    landmarker,
+    video,
+    frameCanvas,
+    bandCanvas,
+    NUMBERING_SCOUT_BANDS,
+  );
   return dedupePosesByTorso(raw, {
-    minDistance: 0.09,
-    minSeparationX: 0.045,
-    yWeight: 0.45,
+    minDistance: 0.085,
+    minSeparationX: 0.04,
+    yWeight: 0.4,
   });
+}
+
+/** Numbering scout with short hold against lighting flicker. */
+function scoutPoses(expectedMin = 1) {
+  const live = scoutPosesRaw();
+  const stabilized = stabilizeScoutPoses(live, scoutHold, performance.now(), {
+    minCount: expectedMin,
+    holdMs: SCOUT_HOLD_MS,
+  });
+  scoutHold = stabilized.hold;
+  return stabilized.poses;
 }
 
 function applyLockFromIndexed(
@@ -374,6 +403,7 @@ function clearNumberingLock(): void {
   lastRaiseByIndex = new Map();
   lockedPeople = [];
   lastPersonCrops = [];
+  scoutHold = createScoutHoldState();
   race = new FirstRaiseTracker();
   lastUiKey = "";
   lockInFlight = false;
@@ -394,7 +424,7 @@ async function loop(nowMs: number): Promise<void> {
     const expected = readExpectedCount();
 
     if (!countLock.locked) {
-      const scout = scoutPoses();
+      const scout = scoutPoses(expected);
       const numbered = numberPosesLeftToRight(scout, expected);
       const liveCount = numbered.length;
       const preview = numbered.map((p) => ({
@@ -414,6 +444,7 @@ async function loop(nowMs: number): Promise<void> {
       const observed = observePersonCount(countLock, liveCount, {
         expectedCount: expected,
         minStableFrames: LOCK_STABLE_FRAMES,
+        maxGapFrames: LOCK_GAP_FRAMES,
       });
       countLock = observed.state;
       renderHud(liveCount, [], null, false);
@@ -436,13 +467,16 @@ async function loop(nowMs: number): Promise<void> {
         const byIndex = new Map(refined.map((p) => [p.index, p]));
         const locked = take.map((p) => byIndex.get(p.index) ?? p);
         lockNumbering(locked);
+        scoutHold = createScoutHoldState();
         lockInFlight = false;
       } else if (liveCount === expected) {
         setStatus(
-          `本地编号 ${liveCount}/${expected} · 稳定 ${countLock.streak}/${LOCK_STABLE_FRAMES} · 近距自动切开`,
+          `本地编号 ${liveCount}/${expected} · 稳定 ${countLock.streak}/${LOCK_STABLE_FRAMES} · 抗光照保持中`,
         );
       } else {
-        setStatus(`本地分割编号 ${liveCount}/${expected} · 需要 ${expected} 人后锁定 · 锁定前不检测举手`);
+        setStatus(
+          `本地分割编号 ${liveCount}/${expected} · 需要 ${expected} 人后锁定 · 强光时请正对镜头、避免逆光`,
+        );
       }
       return;
     }
@@ -457,7 +491,16 @@ async function loop(nowMs: number): Promise<void> {
       boxes,
     });
     lastPersonCrops = cascade.boxes;
-    const indexedPoses = indexedPosesFromCascade(cascade.poses);
+    let indexedPoses = indexedPosesFromCascade(cascade.poses);
+    if (indexedPoses.length < seatAnchors.length) {
+      // Crop Pose often drops under harsh light — refill from full-frame scout.
+      indexedPoses = mergeCropPosesWithScout(
+        seatAnchors.map((s) => ({ index: s.index, x: s.x, y: s.y })),
+        indexedPoses,
+        scoutPosesRaw(),
+        0.2,
+      );
+    }
     seatAnchors = bindPosesToSeatsByIndex(seatAnchors, indexedPoses, {
       maxMissed: TRACK_MAX_MISSED,
     });
@@ -510,10 +553,15 @@ async function onStart(): Promise<void> {
       numPoses: 6,
       runningMode: "IMAGE",
       modelAssetPath: FULL_MODEL_URL,
-      minPoseDetectionConfidence: 0.4,
-      minPosePresenceConfidence: 0.4,
-      minTrackingConfidence: 0.4,
+      // Lower thresholds: strong light washes contrast and drops confidence.
+      minPoseDetectionConfidence: 0.3,
+      minPosePresenceConfidence: 0.3,
+      minTrackingConfidence: 0.3,
     });
+    setStatus("正在打开相机…");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("当前浏览器不支持相机。请用 Chrome/Edge，并用 http://127.0.0.1 打开。");
+    }
     camera = await startCamera(video);
     clearNumberingLock();
     lastTs = 0;
@@ -526,7 +574,20 @@ async function onStart(): Promise<void> {
     raf = requestAnimationFrame((t) => void loop(t));
   } catch (err) {
     console.error(err);
-    setStatus(err instanceof Error ? err.message : "启动失败");
+    const msg = err instanceof Error ? err.message : "启动失败";
+    const denied =
+      /NotAllowedError|Permission denied|PermissionDenied/i.test(msg) ||
+      (err instanceof DOMException && err.name === "NotAllowedError");
+    const notFound =
+      /NotFoundError|DevicesNotFound|Requested device not found/i.test(msg) ||
+      (err instanceof DOMException && err.name === "NotFoundError");
+    if (denied) {
+      setStatus("相机权限被拒绝：请在浏览器地址栏允许摄像头后重试");
+    } else if (notFound) {
+      setStatus("未找到摄像头：请检查设备连接与系统隐私设置");
+    } else {
+      setStatus(msg);
+    }
     btnStart.disabled = false;
     landmarker?.close();
     landmarker = null;

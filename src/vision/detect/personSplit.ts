@@ -151,17 +151,18 @@ export function personBoxesFromSeats(
       })),
     );
   }
+  // Wider fallback crops: harsh light / brief pose miss shrinks landmarks; keep ROI loose.
   const raw = ordered.map((s) =>
     clipBox({
-      xMin: s.x - 0.09,
-      xMax: s.x + 0.09,
-      yMin: s.y - 0.28,
-      yMax: s.y + 0.32,
+      xMin: s.x - 0.12,
+      xMax: s.x + 0.12,
+      yMin: s.y - 0.32,
+      yMax: s.y + 0.36,
       score: 1,
       index: s.index,
     }),
   );
-  return isolateRowCrops(raw, { top: 0.22, x: 0.02, bottom: 0.06 });
+  return isolateRowCrops(raw, { top: 0.28, x: 0.04, bottom: 0.08 });
 }
 
 /**
@@ -195,4 +196,28 @@ export function bindPosesToLockedIndexes(
     out.push({ index: seat.index, x: p.x, y: p.y, landmarks: p.landmarks });
   }
   return out;
+}
+
+/**
+ * Prefer per-seat crop poses; fill gaps from a full-frame scout (bright light / crop miss).
+ * Seat indexes never re-sort — only nearest-torso rebound for missing indexes.
+ */
+export function mergeCropPosesWithScout(
+  seats: readonly { index: number; x: number; y: number }[],
+  cropPoses: readonly IndexedPose[],
+  scoutPoses: readonly { landmarks: readonly PoseLandmark[] }[],
+  maxDx = 0.18,
+): IndexedPose[] {
+  const hit = new Set(cropPoses.map((p) => p.index));
+  if (hit.size >= seats.length || scoutPoses.length === 0) {
+    return [...cropPoses];
+  }
+  const merged = [...cropPoses];
+  const rebound = bindPosesToLockedIndexes(seats, scoutPoses, maxDx);
+  for (const p of rebound) {
+    if (hit.has(p.index)) continue;
+    merged.push(p);
+    hit.add(p.index);
+  }
+  return merged;
 }

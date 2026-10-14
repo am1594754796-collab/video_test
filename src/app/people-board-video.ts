@@ -8,11 +8,14 @@ import {
   bindPosesToSeatsByIndex,
   createCountLockState,
   createPoseLandmarker,
+  createScoutHoldState,
   createSeatAnchors,
   dedupePosesByTorso,
   detectPosesMultiBand,
   FirstRaiseTracker,
   FULL_MODEL_URL,
+  mergeCropPosesWithScout,
+  NUMBERING_SCOUT_BANDS,
   numberPosesLeftToRight,
   personBoxesFromPoses,
   personBoxesFromSeats,
@@ -20,13 +23,16 @@ import {
   SeatRaiseTracker,
   seatsToNumberingSlots,
   slotsFromSort,
+  stabilizeScoutPoses,
   torsoCenter,
   unlockCountLock,
   type CountLockSnapshot,
   type FirstRaiseEvent,
   type NumberingSlot,
   type PersonBox,
+  type PoseFrame,
   type PoseLandmark,
+  type ScoutHoldState,
   type SeatAnchor,
   type SeatRaiseUpdate,
 } from "../vision";
@@ -35,14 +41,16 @@ import { publishClassroomEvent } from "./classroomBus";
 
 const DETECT_INTERVAL_MS = 20;
 const DETECT_INTERVAL_LOCKED_MS = 16;
-const NUMBERING_MAX_TRIES = 8;
-const NUMBERING_RETRY_MS = 400;
+const NUMBERING_MAX_TRIES = 12;
+const NUMBERING_RETRY_MS = 350;
+const SCOUT_HOLD_MS = 380;
 /** Strict MediaPipe joint raise — first frame that passes counts. */
 const RAISE_MARGIN = 0.025;
 const RAISE_MIN_VISIBILITY = 0.25;
 const RAISE_MIN_FRAMES = 1;
 const RAISE_SCORE_THRESHOLD = 0.015;
-const TRACK_MAX_MISSED = 10;
+/** Hold last pose longer under harsh light / brief MediaPipe drops. */
+const TRACK_MAX_MISSED = 48;
 const BUS_SOURCE = "people-video";
 
 const frameCanvas = document.createElement("canvas");
@@ -94,6 +102,7 @@ let lastPersonCrops: PersonBox[] = [];
 let canvasSized = false;
 let race = new FirstRaiseTracker();
 let countLock: CountLockSnapshot = createCountLockState();
+let scoutHold: ScoutHoldState<PoseFrame> = createScoutHoldState();
 let numberingSlots: NumberingSlot[] = [];
 let seatAnchors: SeatAnchor[] = [];
 let seatRaiseByIndex = new Map<number, SeatRaiseTracker>();
@@ -189,14 +198,30 @@ async function checkHealth(): Promise<boolean> {
   }
 }
 
-function scoutPoses() {
+function scoutPosesRaw() {
   if (!landmarker) return [];
-  const raw = detectPosesMultiBand(landmarker, video, frameCanvas, bandCanvas);
+  const raw = detectPosesMultiBand(
+    landmarker,
+    video,
+    frameCanvas,
+    bandCanvas,
+    NUMBERING_SCOUT_BANDS,
+  );
   return dedupePosesByTorso(raw, {
-    minDistance: 0.09,
-    minSeparationX: 0.045,
-    yWeight: 0.45,
+    minDistance: 0.085,
+    minSeparationX: 0.04,
+    yWeight: 0.4,
   });
+}
+
+function scoutPoses(expectedMin = 1) {
+  const live = scoutPosesRaw();
+  const stabilized = stabilizeScoutPoses(live, scoutHold, performance.now(), {
+    minCount: expectedMin,
+    holdMs: SCOUT_HOLD_MS,
+  });
+  scoutHold = stabilized.hold;
+  return stabilized.poses;
 }
 
 function applyLockFromIndexed(
@@ -329,7 +354,7 @@ async function awaitInitialNumbering(opts?: { rewind?: boolean }): Promise<boole
       "正在本地分割编号",
       `第 ${attempt}/${NUMBERING_MAX_TRIES} 次 · 需要 ${expected} 人 · 近距自动切开`,
     );
-    const scout = scoutPoses();
+    const scout = scoutPoses(expected);
     const numbered = numberPosesLeftToRight(scout, expected);
     if (numbered.length >= expected) {
       const take = numbered.slice(0, expected);
@@ -347,6 +372,7 @@ async function awaitInitialNumbering(opts?: { rewind?: boolean }): Promise<boole
       const byIndex = new Map(refined.map((p) => [p.index, p]));
       const locked = take.map((p) => byIndex.get(p.index) ?? p);
       await lockNumbering(locked);
+      scoutHold = createScoutHoldState();
       numberingPhase = false;
       hideLoadOverlay();
       setStatus(`编号已确认 ${expected} 人（左→右）· 开始举手检测`);
@@ -481,6 +507,7 @@ function clearNumberingLock(): void {
   lastRaiseByIndex = new Map();
   lockedPeople = [];
   lastPersonCrops = [];
+  scoutHold = createScoutHoldState();
   race = new FirstRaiseTracker();
   lastUiKey = "";
   renderWinner(null);
@@ -521,7 +548,15 @@ async function loop(nowMs: number): Promise<void> {
       boxes,
     });
     lastPersonCrops = cascade.boxes;
-    const indexedPoses = indexedPosesFromCascade(cascade.poses);
+    let indexedPoses = indexedPosesFromCascade(cascade.poses);
+    if (indexedPoses.length < seatAnchors.length) {
+      indexedPoses = mergeCropPosesWithScout(
+        seatAnchors.map((s) => ({ index: s.index, x: s.x, y: s.y })),
+        indexedPoses,
+        scoutPosesRaw(),
+        0.2,
+      );
+    }
     seatAnchors = bindPosesToSeatsByIndex(seatAnchors, indexedPoses, {
       maxMissed: TRACK_MAX_MISSED,
     });
@@ -648,9 +683,9 @@ async function preloadModels(): Promise<void> {
         numPoses: 6,
         runningMode: "IMAGE",
         modelAssetPath: FULL_MODEL_URL,
-        minPoseDetectionConfidence: 0.4,
-        minPosePresenceConfidence: 0.4,
-        minTrackingConfidence: 0.4,
+        minPoseDetectionConfidence: 0.3,
+        minPosePresenceConfidence: 0.3,
+        minTrackingConfidence: 0.3,
       });
       modelsReady = true;
       refreshIdlePrompt();

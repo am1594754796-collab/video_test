@@ -4,21 +4,30 @@ setlocal
 cd /d "%~dp0"
 
 echo ========================================
-echo  语音作答 · 在线识别（单独启动）
-echo  Vite + Python · 仅打开本页
+echo  Speech online (this page only)
+echo  Vite + Python API
 echo ========================================
 echo.
 
 where node >nul 2>&1
 if errorlevel 1 (
-  echo [错误] 未检测到 Node.js。
+  echo [ERROR] Node.js not found.
   pause
   exit /b 1
 )
 
 where python >nul 2>&1
 if errorlevel 1 (
-  echo [错误] 未检测到 Python。
+  echo [ERROR] Python not found. Install Python 3 from https://www.python.org/
+  echo         Do not use the Microsoft Store placeholder.
+  pause
+  exit /b 1
+)
+
+python -c "import sys; raise SystemExit(0 if sys.version_info[0]>=3 else 1)" >nul 2>&1
+if errorlevel 1 (
+  echo [ERROR] "python" is not a real interpreter (Store stub?).
+  echo         Install Python 3 and ensure "Add to PATH" is checked.
   pause
   exit /b 1
 )
@@ -29,31 +38,42 @@ if not exist "node_modules\" (
 )
 
 if not exist "python\.venv\" (
-  echo [python] 创建虚拟环境并安装依赖 ...
+  echo [python] creating venv and installing deps ...
   python -m venv python\.venv
+  if errorlevel 1 (
+    echo [ERROR] python -m venv failed
+    pause
+    exit /b 1
+  )
   call python\.venv\Scripts\python.exe -m pip install -r python\requirements.txt
 ) else (
   call python\.venv\Scripts\python.exe -m pip install -r python\requirements.txt -q
 )
 
 echo.
-echo 答案库相对路径: 见 python\data\answers.path （默认 data/answers.json）
+echo Answers path: python\data\answers.path (default data/answers.json)
 if exist "python\data\api.env" (
-  echo 线上语义: 已检测到 python\data\api.env
+  echo LLM: found python\data\api.env
 ) else (
-  echo 线上语义: 复制 deploy\api.env.example 为 python\data\api.env 并填入 LLM_API_KEY
+  echo LLM: copy deploy\api.env.example to python\data\api.env and set LLM_API_KEY
 )
+
 call "%~dp0start-python-api.bat"
 if errorlevel 1 (
   pause
   exit /b 1
 )
 
-timeout /t 3 /nobreak >nul
+timeout /t 2 /nobreak >nul
 
-echo 启动网页 : http://localhost:5173/speech-online.html
-echo 提示: 需联网；请用 Chrome / Edge；不要同时开多个 start-*.bat
-start "" "http://localhost:5173/speech-online.html"
-call npm.cmd run dev
+echo.
+echo Page: http://127.0.0.1:5173/speech-online.html
+echo Need network + Chrome/Edge. Do not run multiple start-*.bat at once.
+echo.
 
+call "%~dp0_dev-open.bat" "speech-online.html"
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
 pause
