@@ -3,10 +3,8 @@ import {
   boxCenter,
   boxIou,
   expandBoxForPose,
-  expandFaceToPersonCrop,
   isolateRowCrops,
   nmsPersonBoxes,
-  personBoxesFromFaces,
   selectPersonRow,
   type PersonBox,
 } from "../../src/vision/detect/personBox";
@@ -88,33 +86,5 @@ describe("expandBoxForPose", () => {
     const out = expandBoxForPose({ xMin: 0, yMin: 0, xMax: 0.1, yMax: 0.2, score: 1 }, { top: 0.5, x: 0.5 });
     expect(out.xMin).toBe(0);
     expect(out.yMin).toBe(0);
-  });
-});
-
-describe("expandFaceToPersonCrop", () => {
-  it("grows a face downward and sideways for upper-body pose", () => {
-    const face = { cx: 0.4, cy: 0.28, xMin: 0.35, yMin: 0.2, width: 0.1, height: 0.16, score: 0.9 };
-    const box = expandFaceToPersonCrop(face);
-    expect(box.xMin).toBeLessThan(face.xMin);
-    expect(box.xMax).toBeGreaterThan(face.xMin + face.width);
-    expect(box.yMin).toBeLessThan(face.yMin);
-    expect(box.yMax).toBeGreaterThan(face.yMin + face.height);
-    expect(box.yMax - box.yMin).toBeGreaterThan(face.height * 2.5);
-  });
-});
-
-describe("personBoxesFromFaces", () => {
-  it("returns left-to-right isolated crops", () => {
-    const faces = [
-      { cx: 0.62, cy: 0.3, xMin: 0.57, yMin: 0.22, width: 0.1, height: 0.16, score: 0.9 },
-      { cx: 0.28, cy: 0.3, xMin: 0.23, yMin: 0.22, width: 0.1, height: 0.16, score: 0.9 },
-    ];
-    const boxes = personBoxesFromFaces(faces);
-    expect(boxes).toHaveLength(2);
-    expect(boxes.map((b) => b.index)).toEqual([1, 2]);
-    expect(boxCenter(boxes[0]!).x).toBeLessThan(boxCenter(boxes[1]!).x);
-    const mid = (boxCenter(boxes[0]!).x + boxCenter(boxes[1]!).x) / 2;
-    expect(boxes[0]!.xMax).toBeLessThanOrEqual(mid + 0.08);
-    expect(boxes[1]!.xMin).toBeGreaterThanOrEqual(mid - 0.08);
   });
 });

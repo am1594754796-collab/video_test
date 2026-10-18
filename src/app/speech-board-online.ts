@@ -1,196 +1,201 @@
-import { publishClassroomEvent } from "./classroomBus";
 import {
   fillQuestionSelect,
   findQuestion,
   renderQuestionPreview,
   type BankQuestion,
 } from "./questionUi";
-import { speakQuestion, stopSpeaking } from "./speakQuestion";
+import { publishClassroomEvent } from "./classroomBus";
+import { speakQuestion, speakRaiseHandCountdown, stopSpeaking } from "./speakQuestion";
+import { BackgroundRaiseSession } from "./backgroundRaiseDetect";
+import { RaiseRaceRound } from "../round";
+
+const BUS_SOURCE = "speech-online";
+/** Demo starting points so early-raise −1 is visible. */
+const DEMO_START_SCORE = 5;
 
 type Question = BankQuestion;
 
-type MatchResponse = {
-  question_id: string;
-  transcript: string;
-  expected: string;
-  score: number;
-  passed: boolean;
-  score_char?: number;
-  score_pinyin?: number;
-  score_semantic?: number | null;
-};
-
-type SpeechRecognitionLike = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  maxAlternatives: number;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onresult: ((ev: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((ev: { error: string }) => void) | null;
-  onend: (() => void) | null;
-};
-
-type SpeechRecognitionEventLike = {
-  resultIndex: number;
-  results: ArrayLike<{
-    isFinal: boolean;
-    0: { transcript: string };
-  }>;
-};
-
-type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
-
-const MATCH_DEBOUNCE_MS = 280;
-/** Max answering window after press-to-start. */
-const ANSWER_LIMIT_MS = 10_000;
-
 const questionSelect = document.querySelector<HTMLSelectElement>("#question-select")!;
+const speakRate = document.querySelector<HTMLInputElement>("#speak-rate");
+const speakRateValue = document.querySelector<HTMLElement>("#speak-rate-value");
 const answersPathInput = document.querySelector<HTMLInputElement>("#answers-path")!;
 const btnLoadBank = document.querySelector<HTMLButtonElement>("#btn-load-bank")!;
-const btnRecord = document.querySelector<HTMLButtonElement>("#btn-record")!;
 const btnSpeak = document.querySelector<HTMLButtonElement>("#btn-speak");
 const btnSpeakStop = document.querySelector<HTMLButtonElement>("#btn-speak-stop");
 const apiStatus = document.querySelector<HTMLElement>("#api-status")!;
 const statusEl = document.querySelector<HTMLElement>("#status")!;
 const questionPreview = document.querySelector<HTMLElement>("#question-preview");
-const outTranscript = document.querySelector<HTMLElement>("#out-transcript")!;
-const outExpected = document.querySelector<HTMLElement>("#out-expected")!;
-const outScore = document.querySelector<HTMLElement>("#out-score")!;
-const outPassed = document.querySelector<HTMLElement>("#out-passed")!;
-const countdownEl = document.querySelector<HTMLElement>("#countdown");
+const raiseCountdown = document.querySelector<HTMLElement>("#raise-countdown");
+const raceBanner = document.querySelector<HTMLElement>("#race-banner");
+const scoreDemo = document.querySelector<HTMLElement>("#score-demo");
+const detectStatusEl = document.querySelector<HTMLElement>("#detect-status");
+const bgVideo = document.querySelector<HTMLVideoElement>("#bg-video")!;
 
 let questions: Question[] = [];
-let recognition: SpeechRecognitionLike | null = null;
-let listening = false;
-let finalTranscript = "";
-let interimTranscript = "";
-let stopRequested = false;
-/** Stop ASR as soon as match passes; ignore further speech. */
-let passedLocked = false;
-let frozenTranscript = "";
-let matchTimer: number | null = null;
-let matchAbort: AbortController | null = null;
-let lastMatchedText = "";
-let answerTimer: number | null = null;
-let countdownTimer: number | null = null;
-let answerStartedAt = 0;
-let timedOut = false;
+const race = new RaiseRaceRound();
+const scores = new Map<number, number>();
+let bannerTimer = 0;
+let detect: BackgroundRaiseSession | null = null;
 
 function setStatus(text: string): void {
   statusEl.textContent = text;
 }
 
-function showMatchFields(r: MatchResponse, liveText: string): void {
-  outTranscript.textContent = liveText || r.transcript || "（空）";
-  outExpected.textContent = r.expected;
-  const parts = [`总分 ${(r.score * 100).toFixed(1)}%`];
-  if (typeof r.score_char === "number") {
-    parts.push(`字形 ${(r.score_char * 100).toFixed(0)}%`);
-  }
-  if (typeof r.score_pinyin === "number") {
-    parts.push(`拼音 ${(r.score_pinyin * 100).toFixed(0)}%`);
-  }
-  if (typeof r.score_semantic === "number") {
-    parts.push(`语义 ${(r.score_semantic * 100).toFixed(0)}%`);
-  } else if (r.score_semantic === null) {
-    parts.push("语义 —");
-  }
-  outScore.textContent = parts.join(" · ");
-  outPassed.textContent = r.passed ? "通过" : "未通过";
-  outPassed.className = `pill ${r.passed ? "ok" : "bad"}`;
+function setDetectStatus(text: string): void {
+  if (detectStatusEl) detectStatusEl.textContent = text;
 }
 
-function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
-  const w = window as Window & {
-    SpeechRecognition?: SpeechRecognitionCtor;
-    webkitSpeechRecognition?: SpeechRecognitionCtor;
-  };
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+function hideRaiseCountdown(): void {
+  if (!raiseCountdown) return;
+  raiseCountdown.hidden = true;
+  raiseCountdown.textContent = "";
 }
 
-function liveText(): string {
-  if (passedLocked && frozenTranscript) return frozenTranscript;
-  return `${finalTranscript}${interimTranscript}`.trim();
+function showRaiseCountdown(n: 3 | 2 | 1 | "go"): void {
+  if (!raiseCountdown) return;
+  raiseCountdown.hidden = false;
+  raiseCountdown.textContent = n === "go" ? "举手" : String(n);
 }
 
-function clearMatchTimer(): void {
-  if (matchTimer !== null) {
-    window.clearTimeout(matchTimer);
-    matchTimer = null;
+function showBanner(kind: "early" | "win" | "open", text: string, holdMs = 2800): void {
+  if (!raceBanner) return;
+  window.clearTimeout(bannerTimer);
+  raceBanner.hidden = false;
+  raceBanner.className = `race-banner ${kind}`;
+  raceBanner.textContent = text;
+  if (holdMs > 0) {
+    bannerTimer = window.setTimeout(() => {
+      if (kind === "win") return;
+      raceBanner.hidden = true;
+    }, holdMs);
   }
 }
 
-function clearAnswerTimers(): void {
-  if (answerTimer !== null) {
-    window.clearTimeout(answerTimer);
-    answerTimer = null;
-  }
-  if (countdownTimer !== null) {
-    window.clearInterval(countdownTimer);
-    countdownTimer = null;
-  }
-  if (countdownEl) {
-    countdownEl.textContent = "限时 10s";
+function clearBanner(): void {
+  if (!raceBanner) return;
+  window.clearTimeout(bannerTimer);
+  raceBanner.hidden = true;
+  raceBanner.textContent = "";
+  raceBanner.className = "race-banner";
+}
+
+function renderScores(highlight?: { index: number; kind: "penalty" | "winner" }): void {
+  if (!scoreDemo) return;
+  scoreDemo.innerHTML = "";
+  const seats = [...scores.keys()].sort((a, b) => a - b);
+  for (const index of seats) {
+    const li = document.createElement("li");
+    if (highlight?.index === index) li.classList.add(highlight.kind);
+    li.innerHTML = `<div class="num">#${index}</div><div class="pts">${scores.get(index) ?? 0}</div>`;
+    scoreDemo.appendChild(li);
   }
 }
 
-function remainingSeconds(): number {
-  const left = ANSWER_LIMIT_MS - (Date.now() - answerStartedAt);
-  return Math.max(0, Math.ceil(left / 1000));
+function seedScores(seats: number[]): void {
+  scores.clear();
+  for (const s of seats) scores.set(s, DEMO_START_SCORE);
+  renderScores();
 }
 
-function updateCountdownUi(): void {
-  if (!listening || passedLocked) return;
-  const sec = remainingSeconds();
-  btnRecord.textContent = `按下结束（剩余 ${sec}s）`;
-  if (countdownEl) {
-    countdownEl.textContent = `剩余 ${sec}s`;
+function applyRaceOut(
+  events: ReturnType<RaiseRaceRound["feed"]>,
+): void {
+  for (const e of events) {
+    if (e.type === "early-raise") {
+      const prev = scores.get(e.personIndex) ?? DEMO_START_SCORE;
+      const next = Math.max(0, prev - 1);
+      scores.set(e.personIndex, next);
+      renderScores({ index: e.personIndex, kind: "penalty" });
+      showBanner("early", `#${e.personIndex} 提前举手 · 扣 1 分 → ${next}`);
+      setStatus(`提前抢答 · #${e.personIndex} 扣分（演示）`);
+      publishClassroomEvent({
+        type: "early-raise",
+        personIndex: e.personIndex,
+        atMs: e.atMs,
+        source: BUS_SOURCE,
+      });
+    } else if (e.type === "winner") {
+      renderScores({ index: e.personIndex, kind: "winner" });
+      showBanner("win", `#${e.personIndex} 抢答成功`, 0);
+      setStatus(`抢答成功 · #${e.personIndex} · 本轮已锁定`);
+      publishClassroomEvent({
+        type: "first-raise",
+        personIndex: e.personIndex,
+        source: BUS_SOURCE,
+      });
+    }
   }
 }
 
-function startAnswerDeadline(): void {
-  clearAnswerTimers();
-  timedOut = false;
-  answerStartedAt = Date.now();
-  updateCountdownUi();
-  countdownTimer = window.setInterval(updateCountdownUi, 200);
-  answerTimer = window.setTimeout(() => {
-    if (!listening || passedLocked) return;
-    timedOut = true;
-    setStatus("答题时间到（10s），结束识别…");
-    stopListening();
-  }, ANSWER_LIMIT_MS);
+function abortRound(): void {
+  race.resetToIdle();
+  clearBanner();
+  publishClassroomEvent({ type: "raise-round-abort", source: BUS_SOURCE });
 }
 
-function stopOnPass(matchedText: string): void {
-  if (passedLocked) return;
-  passedLocked = true;
-  frozenTranscript = matchedText.trim();
-  clearMatchTimer();
-  clearAnswerTimers();
-  matchAbort?.abort();
-  stopRequested = true;
-  outTranscript.textContent = frozenTranscript;
-  setStatus(`已通过（限时内），已停止转写 · ${frozenTranscript}`);
-  try {
-    recognition?.stop();
-  } catch {
-    resetListeningUi();
+async function afterQuestionSpeak(q: Question, rate: number): Promise<void> {
+  setStatus(`读题结束 · ${q.id} · 举手倒计时…`);
+  showRaiseCountdown(3);
+  clearBanner();
+  race.beginCountdown(performance.now());
+  publishClassroomEvent({
+    type: "raise-countdown-start",
+    questionId: q.id,
+    source: BUS_SOURCE,
+  });
+  const ok = await speakRaiseHandCountdown({
+    rate,
+    onTick: (n) => {
+      showRaiseCountdown(n);
+      setStatus(`举手倒计时 ${n} · 提前举手将扣分`);
+    },
+    onEnd: () => {
+      const openAt = performance.now();
+      race.openWindow(openAt);
+      publishClassroomEvent({ type: "raise-window-open", source: BUS_SOURCE });
+      showRaiseCountdown("go");
+      showBanner("open", "开始抢答", 1600);
+      setStatus(`发令 · 可抢答 · ${q.id}`);
+      window.setTimeout(() => hideRaiseCountdown(), 1200);
+    },
+    onError: (msg) => {
+      abortRound();
+      hideRaiseCountdown();
+      setStatus(msg);
+    },
+  });
+  if (!ok) {
+    abortRound();
+    hideRaiseCountdown();
   }
+}
+
+function currentSpeakRate(): number {
+  const raw = Number(speakRate?.value ?? "1");
+  if (!Number.isFinite(raw)) return 1;
+  return Math.min(2, Math.max(0.5, raw));
+}
+
+function syncSpeakRateLabel(): void {
+  if (speakRateValue) speakRateValue.textContent = currentSpeakRate().toFixed(2);
 }
 
 async function refreshHealth(): Promise<boolean> {
   try {
     const res = await fetch("/api/health");
     if (!res.ok) throw new Error(String(res.status));
-    apiStatus.textContent = "Python 匹配 API: 已连接 · 在线 ASR";
-    apiStatus.className = "api-status ok";
+    const health = (await res.json()) as {
+      tts_mode?: string;
+      questions_with_audio?: number;
+      has_raise_countdown_audio?: boolean;
+    };
+    const n = health.questions_with_audio ?? 0;
+    const cd = health.has_raise_countdown_audio ? "有倒计时音" : "缺倒计时音";
+    apiStatus.textContent = `Python API 已连接 · 预生成语音 ${n} 题 · ${cd}`;
+    apiStatus.className = n > 0 ? "api-status ok" : "api-status bad";
     return true;
   } catch {
-    apiStatus.textContent = "Python API: 未连接（匹配需 8765）";
+    apiStatus.textContent = "Python API: 未连接（读题需 8765）";
     apiStatus.className = "api-status bad";
     return false;
   }
@@ -213,15 +218,15 @@ function applyQuestions(list: Question[], opts?: { announce?: boolean; pathHint?
   questions = list;
   fillQuestionSelect(questionSelect, questions);
   const n = questions.length;
-  btnRecord.disabled = n === 0;
   if (btnSpeak) btnSpeak.disabled = n === 0;
   syncPreviewFromSelect();
   if (opts?.announce === false) return;
   const path = opts?.pathHint ?? answersPathInput.value;
+  const withAudio = list.filter((q) => q.has_audio).length;
   setStatus(
     n > 0
-      ? `已加载 ${path}（${n} 题）。选题后可点「扬声器读题」`
-      : "答案库为空",
+      ? `已加载 ${path}（${n} 题，${withAudio} 题有预生成语音）。选题后可点「扬声器读题」`
+      : "题库为空",
   );
 }
 
@@ -230,32 +235,45 @@ function syncPreviewFromSelect(): void {
   renderQuestionPreview(questionPreview, q);
 }
 
-function onSpeakQuestion(): void {
+async function onSpeakQuestion(): Promise<void> {
   const q = findQuestion(questions, questionSelect.value);
   if (!q) {
     setStatus("请先选择题目");
     return;
   }
-  if (listening) {
-    setStatus("识别中请先结束，再读题");
+  hideRaiseCountdown();
+  clearBanner();
+  if (q.has_audio === false) {
+    setStatus(`缺少 ${q.id}.mp3：在 python/ 运行 .venv\\Scripts\\python.exe -m speech_answer.prebuild_audio`);
     return;
   }
-  const ok = speakQuestion(q, {
-    onEnd: () => setStatus(`读题结束 · ${q.id} · 可开始识别`),
-    onError: (msg) => setStatus(msg),
+  // Reset race outcome for a new question; keep seat scores for the demo session.
+  race.resetToIdle();
+  renderScores();
+  const rate = currentSpeakRate();
+  setStatus(`正在播放预生成语音 ${q.id}（播放倍速 ${rate.toFixed(2)}）…`);
+  await speakQuestion(q, {
+    rate,
+    onEnd: () => {
+      void afterQuestionSpeak(q, rate);
+    },
+    onError: (msg) => {
+      hideRaiseCountdown();
+      setStatus(msg);
+    },
   });
-  if (ok) {
-    setStatus(`正在朗读 ${q.id} 题干与选项（不含标准答案）…`);
-  }
 }
+
+speakRate?.addEventListener("input", () => syncSpeakRateLabel());
+syncSpeakRateLabel();
 
 async function loadAnswerBankFromInput(): Promise<void> {
   const path = answersPathInput.value.trim();
   if (!path) {
-    setStatus("请填写答案库相对路径，例如 data/answers.json");
+    setStatus("请填写题库相对路径，例如 data/answers.json");
     return;
   }
-  setStatus(`加载答案库：${path} …`);
+  setStatus(`加载题库：${path} …`);
   btnLoadBank.disabled = true;
   try {
     const res = await fetch("/api/speech/bank", {
@@ -280,204 +298,10 @@ async function loadAnswerBankFromInput(): Promise<void> {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    setStatus(`加载答案库失败：${msg}`);
-    btnRecord.disabled = true;
+    setStatus(`加载题库失败：${msg}`);
     if (btnSpeak) btnSpeak.disabled = true;
   } finally {
     btnLoadBank.disabled = false;
-  }
-}
-
-async function matchNow(transcript: string, opts?: { force?: boolean }): Promise<void> {
-  if (passedLocked && !opts?.force) return;
-
-  const force = opts?.force ?? false;
-  const questionId = questionSelect.value;
-  if (!questionId) return;
-
-  const text = transcript.trim();
-  if (!text) return;
-  if (!force && text === lastMatchedText) return;
-
-  matchAbort?.abort();
-  const ac = new AbortController();
-  matchAbort = ac;
-
-  try {
-    const res = await fetch("/api/speech/match-text", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question_id: questionId, transcript: text }),
-      signal: ac.signal,
-    });
-    const body = (await res.json().catch(() => ({}))) as MatchResponse & { detail?: string };
-    if (!res.ok) {
-      throw new Error(body.detail || `HTTP ${res.status}`);
-    }
-    // A newer utterance may have already locked pass; drop stale responses.
-    if (passedLocked) return;
-
-    lastMatchedText = text;
-    showMatchFields(body, text);
-    if (body.passed) {
-      setStatus(`匹配通过（≥90%）· ${text}`);
-      publishClassroomEvent({
-        type: "answer-passed",
-        questionId,
-        transcript: text,
-        source: "speech-online",
-      });
-      if (listening) {
-        stopOnPass(text);
-      }
-      return;
-    }
-    if (listening) {
-      const sec = remainingSeconds();
-      setStatus(`实时匹配 ${(body.score * 100).toFixed(0)}% · 剩余 ${sec}s · ${text}`);
-    } else if (timedOut) {
-      setStatus(`时间到（10s）· 未通过 · ${text}`);
-    } else {
-      setStatus("未达到 90% 匹配");
-    }
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") return;
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!listening && !passedLocked) {
-      setStatus(`匹配失败：${msg}`);
-      outPassed.textContent = "错误";
-      outPassed.className = "pill bad";
-    }
-  }
-}
-
-function scheduleLiveMatch(text: string): void {
-  if (passedLocked) return;
-  clearMatchTimer();
-  matchTimer = window.setTimeout(() => {
-    matchTimer = null;
-    void matchNow(text);
-  }, MATCH_DEBOUNCE_MS);
-}
-
-function resetListeningUi(): void {
-  listening = false;
-  stopRequested = false;
-  recognition = null;
-  clearAnswerTimers();
-  btnRecord.classList.remove("recording");
-  btnRecord.textContent = "按下开始识别";
-  questionSelect.disabled = false;
-}
-
-function startListening(): void {
-  const Ctor = getSpeechRecognitionCtor();
-  if (!Ctor) {
-    setStatus("当前浏览器不支持 Web Speech，请用 Chrome / Edge");
-    return;
-  }
-
-  stopSpeaking();
-
-  finalTranscript = "";
-  interimTranscript = "";
-  stopRequested = false;
-  passedLocked = false;
-  frozenTranscript = "";
-  lastMatchedText = "";
-  timedOut = false;
-  clearMatchTimer();
-  matchAbort?.abort();
-
-  outTranscript.textContent = "…";
-  outScore.textContent = "—";
-  outPassed.textContent = "听写中";
-  outPassed.className = "pill idle";
-
-  const rec = new Ctor();
-  recognition = rec;
-  rec.lang = "zh-CN";
-  rec.continuous = true;
-  rec.interimResults = true;
-  rec.maxAlternatives = 1;
-
-  rec.onresult = (ev) => {
-    if (passedLocked) return;
-
-    let interim = "";
-    let finals = finalTranscript;
-    for (let i = ev.resultIndex; i < ev.results.length; i++) {
-      const piece = ev.results[i]![0]!.transcript;
-      if (ev.results[i]!.isFinal) {
-        finals += piece;
-      } else {
-        interim += piece;
-      }
-    }
-    finalTranscript = finals;
-    interimTranscript = interim;
-    const live = `${finals}${interim}`.trim();
-    outTranscript.textContent = live || "…";
-    const sec = remainingSeconds();
-    setStatus(live ? `实时转写（剩余 ${sec}s）：${live}` : `正在听… 剩余 ${sec}s`);
-    if (live) {
-      scheduleLiveMatch(live);
-    }
-  };
-
-  rec.onerror = (ev) => {
-    if (ev.error === "aborted" || ev.error === "no-speech") return;
-    if (passedLocked) return;
-    setStatus(`在线识别错误：${ev.error}`);
-  };
-
-  rec.onend = () => {
-    const wasStop = stopRequested;
-    const alreadyPassed = passedLocked;
-    const wasTimeout = timedOut;
-    const text = liveText();
-    clearMatchTimer();
-    clearAnswerTimers();
-    resetListeningUi();
-    if (alreadyPassed) {
-      if (frozenTranscript) {
-        outTranscript.textContent = frozenTranscript;
-      }
-      return;
-    }
-    if (wasStop && text) {
-      void matchNow(text, { force: true }).then(() => {
-        if (wasTimeout && !passedLocked) {
-          // matchNow may have updated status; reinforce timeout context if still failing
-        }
-      });
-    } else if (wasStop && !text) {
-      setStatus(wasTimeout ? "时间到（10s），没有识别到有效语音" : "没有识别到有效语音");
-    }
-  };
-
-  rec.start();
-  listening = true;
-  btnRecord.classList.add("recording");
-  questionSelect.disabled = true;
-  startAnswerDeadline();
-  setStatus("已开始 · 限时 10s · 通过或超时均自动结束");
-}
-
-function stopListening(): void {
-  if (!recognition) return;
-  stopRequested = true;
-  clearAnswerTimers();
-  if (!timedOut) {
-    setStatus("结束听写…");
-  }
-  try {
-    recognition.stop();
-  } catch {
-    const text = liveText();
-    clearMatchTimer();
-    resetListeningUi();
-    if (text) void matchNow(text, { force: true });
   }
 }
 
@@ -487,55 +311,94 @@ btnLoadBank.addEventListener("click", () => {
 
 questionSelect.addEventListener("change", () => {
   stopSpeaking();
+  abortRound();
+  hideRaiseCountdown();
   syncPreviewFromSelect();
   const q = findQuestion(questions, questionSelect.value);
   if (!q) return;
-  setStatus(`已选 ${q.id} · 正在朗读题干与选项…`);
-  speakQuestion(q, {
-    onEnd: () => setStatus(`读题结束 · ${q.id} · 可开始识别`),
-    onError: (msg) => setStatus(msg),
-  });
+  void onSpeakQuestion();
 });
 
-btnSpeak?.addEventListener("click", () => onSpeakQuestion());
+btnSpeak?.addEventListener("click", () => {
+  void onSpeakQuestion();
+});
 btnSpeakStop?.addEventListener("click", () => {
   stopSpeaking();
+  abortRound();
+  hideRaiseCountdown();
   setStatus("已停止朗读");
 });
 
-btnRecord.addEventListener("click", () => {
-  if (listening) {
-    stopListening();
-    return;
-  }
-  startListening();
-});
-
-async function boot(): Promise<void> {
-  if (!getSpeechRecognitionCtor()) {
-    apiStatus.textContent = "不支持 Web Speech（请用 Chrome/Edge）";
-    apiStatus.className = "api-status bad";
-    btnRecord.disabled = true;
-    setStatus("请换 Chromium 系浏览器再试在线识别");
-    return;
-  }
-
-  const ok = await refreshHealth();
-  if (!ok) {
-    setStatus("请先启动 Python API（8765）用于答案匹配，然后刷新");
-    btnRecord.disabled = true;
-    return;
-  }
+async function startBackgroundDetect(): Promise<void> {
+  detect = new BackgroundRaiseSession(
+    { video: bgVideo, expectedCount: 1 },
+    {
+      onStatus: setDetectStatus,
+      onLocked: (seats) => {
+        seedScores(seats);
+        publishClassroomEvent({ type: "numbering-locked", seats, source: BUS_SOURCE });
+        setDetectStatus(`后台已锁定 ${seats.map((n) => `#${n}`).join(" ")} · 右下角为弱化预览`);
+      },
+      onCleared: () => {
+        scores.clear();
+        renderScores();
+        publishClassroomEvent({ type: "numbering-cleared", source: BUS_SOURCE });
+      },
+      onFrame: (people, nowMs) => {
+        const raised = people.filter((p) => p.raised).map((p) => `#${p.personIndex}`);
+        const phaseHint =
+          race.phase === "countdown"
+            ? "倒计时判定中"
+            : race.phase === "open"
+              ? "可抢答"
+              : race.phase === "locked"
+                ? "本轮已锁定"
+                : "等待读题倒计时";
+        setDetectStatus(
+          raised.length > 0
+            ? `检测：举手 ${raised.join("、")} · ${phaseHint}`
+            : `检测：未举手 · ${phaseHint}${detect?.locked ? "" : " · 尚未锁定座位"}`,
+        );
+        // Always feed while armed so held-up hands into countdown still count.
+        if (race.phase === "idle") return;
+        applyRaceOut(race.feed(people, nowMs));
+      },
+    },
+  );
   try {
-    await loadQuestions();
-    setStatus(
-      `答案库：${answersPathInput.value} · 选题后按下开始（相对路径可改后点「加载答案库」）`,
-    );
+    bgVideo.classList.add("live");
+    await detect.start();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    setStatus(`加载题目失败：${msg}`);
-    btnRecord.disabled = true;
+    const denied =
+      /NotAllowedError|Permission denied|PermissionDenied/i.test(msg) ||
+      (err instanceof DOMException && err.name === "NotAllowedError");
+    setDetectStatus(
+      denied
+        ? "后台检测：请允许摄像头后刷新页面"
+        : `后台检测启动失败：${msg}`,
+    );
   }
+}
+
+async function boot(): Promise<void> {
+  const ok = await refreshHealth();
+  if (!ok) {
+    setStatus("请先启动 Python API（8765）用于读题，然后刷新");
+    if (btnSpeak) btnSpeak.disabled = true;
+  } else {
+    try {
+      await loadQuestions();
+      setStatus(
+        `题库：${answersPathInput.value} · 选题后点「扬声器读题」；举手在后台自动检测`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatus(`加载题目失败：${msg}`);
+      if (btnSpeak) btnSpeak.disabled = true;
+    }
+  }
+  void startBackgroundDetect();
 }
 
 void boot();

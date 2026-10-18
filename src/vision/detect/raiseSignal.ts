@@ -1,9 +1,11 @@
 /**
- * Classroom raise signal on MediaPipe Pose joints + N-frame confirm + race timing.
+ * Classroom raise signal: colored paddle (primary) + weak pose assist + N-frame confirm.
  *
  * Pipeline:
- *   MediaPipe Pose landmarks (EMA-smoothed) → isHandRaised / handsRaised
- *   → RaiseDebouncer (default 1 frame = first hit) → FirstRaiseTracker score/edge.
+ *   MediaPipe Pose (EMA) + frame pixels → evaluatePaddleRaise (color-heavy)
+ *   → RaiseDebouncer → FirstRaiseTracker score/edge.
+ *
+ * `evaluateHandRaise` remains available for pose-only debugging.
  */
 
 import { RaiseDebouncer } from "./raiseDebouncer";
@@ -14,6 +16,12 @@ import {
   type HandRaiseOptions,
   type PoseLandmark,
 } from "./isHandRaised";
+import { paddleColorForSeat, type PaddleColor } from "./paddleColors";
+import {
+  evaluatePaddleRaise,
+  type FramePixels,
+  type PaddleRaiseOptions,
+} from "./paddleSignal";
 
 export type RaiseEval = {
   raised: boolean;
@@ -25,12 +33,19 @@ export type RaiseEval = {
 export type SeatRaiseUpdate = {
   /** Debounced / N-frame-confirmed flag for HUD + first-raise race. */
   raised: boolean;
-  /** Instantaneous MediaPipe joint raise. */
+  /** Instantaneous paddle+pose raise. */
   rawRaised: boolean;
   score: number;
   side: "left" | "right" | null;
+  paddleScore?: number;
+  poseAssist?: number;
   /** Clock when confirmed raise first became true (rising edge). */
   edgeAtMs?: number;
+};
+
+export type SeatRaiseFrameContext = {
+  otherLandmarks?: readonly (readonly PoseLandmark[])[];
+  frame?: FramePixels | null;
 };
 
 /** Default wrist-above-shoulder margin for classroom MediaPipe joints. */
@@ -87,22 +102,35 @@ export type SeatRaiseTrackerOptions = {
    * Default 1: first frame that passes the raise predicate counts (race-friendly).
    */
   minFrames?: number;
-  /** Instantaneous score must exceed this to count as a raw hit. */
+  /** Instantaneous fused score must exceed this to count as a raw hit. */
   scoreThreshold?: number;
   /** EMA alpha for pose-assisted landmark smoothing (0 = off). */
   smoothAlpha?: number;
+  /** Seat index 1–6 → paddle color. Required for classroom paddle mode. */
+  seatIndex?: number;
+  /** Override paddle color (defaults from seatIndex). */
+  paddleColor?: PaddleColor;
+  /**
+   * When true (default), require paddle color in the frame.
+   * Set false only for pose-only unit tests / legacy debug.
+   */
+  requirePaddle?: boolean;
   raiseOptions?: HandRaiseOptions;
+  paddleOptions?: PaddleRaiseOptions;
 };
 
 /**
- * Per-seat raise: EMA pose smooth → MediaPipe joint raise → optional N-frame confirm.
+ * Per-seat raise: EMA pose smooth → paddle color + weak pose → N-frame confirm.
  * With minFrames=1, the first qualifying frame is raised + race edge.
  */
 export class SeatRaiseTracker {
   private readonly debouncer: RaiseDebouncer;
   private readonly scoreThreshold: number;
   private readonly raiseOptions: HandRaiseOptions;
+  private readonly paddleOptions: PaddleRaiseOptions;
   private readonly smoothAlpha: number;
+  private readonly paddleColor: PaddleColor;
+  private readonly requirePaddle: boolean;
   private prevConfirmed = false;
   private confirmStreakStartMs = 0;
   private smoothed: PoseLandmark[] | null = null;
@@ -111,7 +139,14 @@ export class SeatRaiseTracker {
     this.debouncer = new RaiseDebouncer({ minFrames: options.minFrames ?? 1 });
     this.scoreThreshold = options.scoreThreshold ?? 0.01;
     this.raiseOptions = { classroom: true, ...(options.raiseOptions ?? {}) };
+    this.paddleOptions = options.paddleOptions ?? {};
     this.smoothAlpha = options.smoothAlpha ?? 0.45;
+    this.paddleColor = options.paddleColor ?? paddleColorForSeat(options.seatIndex ?? 1);
+    this.requirePaddle = options.requirePaddle ?? true;
+  }
+
+  get color(): PaddleColor {
+    return this.paddleColor;
   }
 
   reset(): void {
@@ -124,14 +159,18 @@ export class SeatRaiseTracker {
   update(
     landmarks: readonly PoseLandmark[] | null,
     nowMs: number,
-    otherLandmarks: readonly (readonly PoseLandmark[])[] = [],
+    ctx: SeatRaiseFrameContext | readonly (readonly PoseLandmark[])[] = {},
   ): SeatRaiseUpdate {
+    const frameCtx: SeatRaiseFrameContext = Array.isArray(ctx)
+      ? { otherLandmarks: ctx as readonly (readonly PoseLandmark[])[] }
+      : (ctx as SeatRaiseFrameContext);
+
     if (!landmarks) {
       this.debouncer.update(false);
       this.prevConfirmed = false;
       this.confirmStreakStartMs = 0;
       this.smoothed = null;
-      return { raised: false, rawRaised: false, score: 0, side: null };
+      return { raised: false, rawRaised: false, score: 0, side: null, paddleScore: 0, poseAssist: 0 };
     }
 
     const pose =
@@ -140,12 +179,29 @@ export class SeatRaiseTracker {
         : landmarks.map((p) => ({ ...p }));
     this.smoothed = pose;
 
-    const ev = evaluateHandRaise(pose, {
-      ...this.raiseOptions,
-      classroom: true,
-      otherLandmarks,
-    });
-    const rawRaised = ev.raised && ev.score >= this.scoreThreshold;
+    let rawRaised = false;
+    let score = 0;
+    let side: "left" | "right" | null = null;
+    let paddleScore = 0;
+    let poseAssist = 0;
+
+    if (this.requirePaddle) {
+      const ev = evaluatePaddleRaise(pose, frameCtx.frame, this.paddleColor, this.paddleOptions);
+      paddleScore = ev.paddleScore;
+      poseAssist = ev.poseAssist;
+      score = ev.score;
+      side = ev.side;
+      rawRaised = ev.raised && ev.score >= this.scoreThreshold;
+    } else {
+      const ev = evaluateHandRaise(pose, {
+        ...this.raiseOptions,
+        classroom: true,
+        otherLandmarks: frameCtx.otherLandmarks ?? [],
+      });
+      score = ev.score;
+      side = ev.side;
+      rawRaised = ev.raised && ev.score >= this.scoreThreshold;
+    }
 
     if (rawRaised && this.confirmStreakStartMs === 0) {
       this.confirmStreakStartMs = nowMs;
@@ -161,7 +217,7 @@ export class SeatRaiseTracker {
     }
 
     this.prevConfirmed = raised;
-    return { raised, rawRaised, score: ev.score, side: ev.side, edgeAtMs };
+    return { raised, rawRaised, score, side, paddleScore, poseAssist, edgeAtMs };
   }
 }
 

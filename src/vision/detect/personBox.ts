@@ -1,9 +1,7 @@
 /**
- * Normalized person boxes for the Qwen → MediaPipe cascade.
+ * Normalized person boxes for isolated Pose crops.
  * Coordinates are in full-frame [0, 1].
  */
-
-import type { FaceBox } from "./faceDetector";
 
 export type PersonBox = {
   xMin: number;
@@ -13,7 +11,7 @@ export type PersonBox = {
   score: number;
   /** Stable id from BoxTracker; unset on raw detections. */
   trackId?: number;
-  /** Qwen left→right seat number; must follow the crop through Pose. */
+  /** Left→right seat number; must follow the crop through Pose. */
   index?: number;
 };
 
@@ -78,63 +76,6 @@ export function nmsPersonBoxes(
     kept.push(box);
   }
   return kept;
-}
-
-/**
- * Grow a Qwen face box into an upper-body crop for single-person Pose.
- * Face is the head: pad sideways for shoulders/arms, down for torso, up for raised hands.
- */
-export function expandFaceToPersonCrop(face: FaceBox, pad: BoxPad = {}): PersonBox {
-  const top = pad.top ?? 1.05;
-  const x = pad.x ?? 1.15;
-  const bottom = pad.bottom ?? 3.35;
-  const w = Math.max(0.02, face.width);
-  const h = Math.max(0.02, face.height);
-  return clipBox({
-    xMin: face.xMin - w * x,
-    xMax: face.xMin + face.width + w * x,
-    yMin: face.yMin - h * top,
-    yMax: face.yMin + face.height + h * bottom,
-    score: face.score,
-    index: face.index,
-  });
-}
-
-/**
- * Numbered faces (left→right) → isolated person crops for MediaPipe.
- */
-export function personBoxesFromFaces(
-  faces: readonly FaceBox[],
-  pad: BoxPad = {},
-): PersonBox[] {
-  if (faces.length === 0) return [];
-  const expanded = [...faces]
-    .sort((a, b) => a.cx - b.cx || a.cy - b.cy)
-    .map((f, i) => {
-      const box = expandFaceToPersonCrop(f, pad);
-      return { ...box, index: f.index ?? i + 1 };
-    });
-  return isolateRowCrops(expanded, { top: 0.12, x: 0.05, bottom: 0.06 });
-}
-
-/**
- * Fallback crop around a locked seat when the matching face is missing this frame.
- */
-export function personBoxFromSeat(
-  seat: { x: number; y: number; index?: number },
-  size: { halfW?: number; halfH?: number; padTop?: number } = {},
-): PersonBox {
-  const halfW = size.halfW ?? 0.11;
-  const halfH = size.halfH ?? 0.22;
-  const padTop = size.padTop ?? 0.28;
-  return clipBox({
-    xMin: seat.x - halfW,
-    xMax: seat.x + halfW,
-    yMin: seat.y - halfH - padTop,
-    yMax: seat.y + halfH,
-    score: 1,
-    index: seat.index,
-  });
 }
 
 export function expandBoxForPose(box: PersonBox, pad: BoxPad = {}): PersonBox {

@@ -7,6 +7,14 @@ export type ClassroomEvent =
   | { type: "numbering-locked"; seats: number[]; source?: string }
   | { type: "numbering-cleared"; source?: string }
   | { type: "first-raise"; personIndex: number; source?: string }
+  /** Countdown audio started (speech page). Vision enters COUNTDOWN. */
+  | { type: "raise-countdown-start"; questionId?: string; source?: string }
+  /** Countdown audio ended (speech page). Vision stamps local open time. */
+  | { type: "raise-window-open"; source?: string }
+  /** Speech stopped mid-countdown / round aborted. */
+  | { type: "raise-round-abort"; source?: string }
+  /** Raised during COUNTDOWN (or before open grace). Scoreboard may deduct. */
+  | { type: "early-raise"; personIndex: number; atMs?: number; source?: string }
   | { type: "race-reset"; source?: string }
   | { type: "answer-passed"; questionId?: string; transcript?: string; source?: string }
   | { type: "scores-clear"; source?: string };

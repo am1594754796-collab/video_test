@@ -98,15 +98,11 @@ copy python\data\api.env.example python\data\api.env
 LLM_API_KEY=你的Key
 ```
 
-`LLM_API_KEY`：语音语义 + 千问人脸 **共用**。地址 / 模型不要改。
+`LLM_API_KEY`：仅用于**预生成**题库 MP3（`python -m speech_answer.prebuild_audio`）。读题页只播放 `data/audio/*.mp3`，不再实时合成。
 
 `api.env` 已 gitignore，**不要提交**。改完后重启 uvicorn。
 
 旧文件 `online.env` 仍会加载（兼容），但新配置请只维护 `api.env`。
-
-## 线上语义判分（整句）
-
-默认走线上千问语义（`qwen-plus`），与人脸共用 `LLM_API_KEY`。
 
 ## 换机移植
 

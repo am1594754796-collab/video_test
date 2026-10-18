@@ -1,0 +1,13 @@
+/**
+ * Round / race flow — countdown gate + early-raise / first-raise decisions.
+ * Vision detection stays in `src/vision`; scoring UI stays in app pages.
+ */
+
+export {
+  RaiseRaceRound,
+  type RaiseRaceObservation,
+  type RaiseRaceOutEvent,
+  type RaiseRaceRoundOptions,
+  type RaiseRaceWinner,
+  type RoundPhase,
+} from "./raiseRaceRound";

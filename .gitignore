@@ -7,11 +7,14 @@ python/.venv/
 python/**/__pycache__/
 python/**/*.pyc
 python/.pytest_cache/
+python/score_qr/data/
 .vite/
 python/data/online.env
 **/online.env
 python/data/api.env
 **/api.env
+# Prebuilt CosyVoice MP3s (generate locally; see python/data/audio/README.md)
+python/data/audio/*.mp3
 # Large MediaPipe binaries (download once; see public/mediapipe/README.md)
 public/mediapipe/models/*.task
 public/mediapipe/models/*.part

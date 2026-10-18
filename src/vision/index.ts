@@ -28,25 +28,11 @@ export {
 export {
   slotsFromSort,
   rebindSlotsToTracks,
-  shouldRefreshCloudFaces,
   indexByTrackIdFromSlots,
-  countSlotsWithFace,
   type NumberingSlot,
   type TrackPoint,
   type RebindOptions,
 } from "./detect/numberingSlots";
-export {
-  type FaceBox,
-} from "./detect/faceDetector";
-export {
-  extractFaceDescriptor,
-  cosineSimilarity,
-  pickFaceForPerson,
-  assignFaceDescriptorsToTracks,
-  matchFacesToIds,
-  type FaceDescriptor,
-  type MatchedFace,
-} from "./detect/faceDescriptor";
 export {
   createPoseLandmarker,
   detectPosesForVideo,
@@ -70,9 +56,6 @@ export {
   boxCenter,
   isolateRowCrops,
   selectPersonRow,
-  expandFaceToPersonCrop,
-  personBoxesFromFaces,
-  personBoxFromSeat,
   type PersonBox,
 } from "./detect/personBox";
 export { BoxTracker, type TrackedBox } from "./detect/boxTracker";
@@ -95,19 +78,6 @@ export {
   runMpOnPersonBoxes,
   type PersonMpResult,
 } from "./detect/personMpCascade";
-export {
-  runQwenMpCascade,
-  runMpOnPersonBoxes as runMpOnPersonBoxesQwen,
-  personBoxesFromNumberedSeats,
-  type QwenMpResult,
-} from "./detect/qwenMpCascade";
-export {
-  numberFacesLeftToRight,
-  followLockedFaces,
-  nudgeLockedFacesTowardHeads,
-  shouldPollVisionFaces,
-  type NumberedFace,
-} from "./detect/qwenNumbering";
 export {
   dedupeRowPoses,
   collapseByMinGapX,
@@ -133,5 +103,25 @@ export {
   SeatRaiseTracker,
   type RaiseEval,
   type SeatRaiseUpdate,
+  type SeatRaiseFrameContext,
+  type SeatRaiseTrackerOptions,
 } from "./detect/raiseSignal";
+export {
+  SEAT_PADDLE_COLORS,
+  PADDLE_COLOR_LABELS,
+  paddleColorForSeat,
+  paddleColorLabelForSeat,
+  type PaddleColor,
+} from "./detect/paddleColors";
+export {
+  evaluatePaddleRaise,
+  framePixelsFromCanvas,
+  paddleSearchRoi,
+  pixelMatchesPaddleColor,
+  scorePaddleColor,
+  weakPoseAssist,
+  type FramePixels,
+  type PaddleRaiseEval,
+  type PaddleRaiseOptions,
+} from "./detect/paddleSignal";
 export { startCamera, type CameraHandle } from "./camera/startCamera";

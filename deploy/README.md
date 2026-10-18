@@ -31,7 +31,7 @@ cd ..
 
 ## 2. 统一 API 密钥（必做）
 
-换机的人**只改 Key**。地址、模型、开关已内置（DashScope + `qwen-plus` / `qwen-vl-plus`，语义 online、人脸 qwen）。
+换机的人**只改 Key**。读题默认已内置（DashScope + `cosyvoice-v2`）。
 
 ```bat
 copy deploy\api.env.example python\data\api.env
@@ -45,7 +45,7 @@ LLM_API_KEY=你的阿里云 DashScope 密钥
 
 改完后**必须重启** uvicorn / `start-*.bat`。
 
-验收：`http://127.0.0.1:8765/api/health` 中 `llm_configured` / `vision_face_configured` 为 `true`。
+验收：`http://127.0.0.1:8765/api/health` 中 `llm_configured` / `tts_configured` 为 `true`，`tts_model` 为 `cosyvoice-v2`。
 
 ---
 

@@ -20,9 +20,9 @@ function lm(cx: number): PoseLandmark[] {
 describe("seatAnchors", () => {
   it("keeps seat index stable when detections shuffle", () => {
     const anchors = createSeatAnchors([
-      { index: 1, trackId: 10, x: 0.2, y: 0.5, faceDescriptor: null },
-      { index: 2, trackId: 20, x: 0.5, y: 0.5, faceDescriptor: null },
-      { index: 3, trackId: 30, x: 0.8, y: 0.5, faceDescriptor: null },
+      { index: 1, trackId: 10, x: 0.2, y: 0.5 },
+      { index: 2, trackId: 20, x: 0.5, y: 0.5 },
+      { index: 3, trackId: 30, x: 0.8, y: 0.5 },
     ]);
 
     const frame1 = matchDetectionsToSeats(anchors, [
@@ -46,8 +46,8 @@ describe("seatAnchors", () => {
 
   it("preserves seat identity across a brief miss", () => {
     let anchors = createSeatAnchors([
-      { index: 1, trackId: 1, x: 0.3, y: 0.5, faceDescriptor: null },
-      { index: 2, trackId: 2, x: 0.7, y: 0.5, faceDescriptor: null },
+      { index: 1, trackId: 1, x: 0.3, y: 0.5 },
+      { index: 2, trackId: 2, x: 0.7, y: 0.5 },
     ]);
     anchors = matchDetectionsToSeats(anchors, [
       { x: 0.3, y: 0.5, landmarks: lm(0.3) },
@@ -61,27 +61,10 @@ describe("seatAnchors", () => {
     expect(anchors[1]!.landmarks).not.toBeNull();
   });
 
-  it("keeps numbering when people swap places if face templates match", () => {
-    const faceA = Array.from({ length: 8 }, (_, i) => (i === 0 ? 1 : 0));
-    const faceB = Array.from({ length: 8 }, (_, i) => (i === 1 ? 1 : 0));
-    let anchors = createSeatAnchors([
-      { index: 1, trackId: 1, x: 0.2, y: 0.5, faceDescriptor: faceA },
-      { index: 2, trackId: 2, x: 0.8, y: 0.5, faceDescriptor: faceB },
-    ]);
-    anchors = matchDetectionsToSeats(anchors, [
-      { x: 0.79, y: 0.5, landmarks: lm(0.79), faceDescriptor: faceA },
-      { x: 0.21, y: 0.5, landmarks: lm(0.21), faceDescriptor: faceB },
-    ]);
-    expect(anchors[0]!.index).toBe(1);
-    expect(anchors[0]!.x).toBeCloseTo(0.79);
-    expect(anchors[1]!.index).toBe(2);
-    expect(anchors[1]!.x).toBeCloseTo(0.21);
-  });
-
-  it("binds poses by Qwen index even when torso x order is reversed", () => {
+  it("binds poses by locked index even when torso x order is reversed", () => {
     const anchors = createSeatAnchors([
-      { index: 1, trackId: 1, x: 0.2, y: 0.5, faceDescriptor: null },
-      { index: 2, trackId: 2, x: 0.8, y: 0.5, faceDescriptor: null },
+      { index: 1, trackId: 1, x: 0.2, y: 0.5 },
+      { index: 2, trackId: 2, x: 0.8, y: 0.5 },
     ]);
     const next = bindPosesToSeatsByIndex(anchors, [
       { index: 2, x: 0.21, y: 0.48, landmarks: lm(0.21) },

@@ -3,23 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>语音作答 · 在线识别</title>
+    <title>读题 · CosyVoice</title>
     <link rel="stylesheet" href="/src/app/speech-board.css" />
   </head>
   <body>
     <main class="app">
       <header>
-        <h1>语音作答 · 在线识别</h1>
+        <h1>读题 · 抢答</h1>
         <p class="sub">
-          按下开始后实时转写并边说边匹配；<strong>限时 10s</strong>：通过即停，超时也停
-          · <a href="/people-fast.html">人物编号快版</a>
+          前台看题读题；举手检测在后台默认运行。倒计时内举手扣分，发令后举手为抢答成功。
+          · <a href="/people-fast.html">视觉调试</a>
           · <a href="/scoreboard.html">计分板</a>
         </p>
       </header>
 
       <section class="controls bank-controls">
         <label class="field field-wide">
-          答案库相对路径（相对 python/）
+          题库相对路径（相对 python/）
           <input
             id="answers-path"
             type="text"
@@ -28,7 +28,7 @@
             autocomplete="off"
           />
         </label>
-        <button type="button" id="btn-load-bank" class="secondary">加载答案库</button>
+        <button type="button" id="btn-load-bank" class="secondary">加载题库</button>
         <span id="api-status" class="api-status">检查中…</span>
       </section>
 
@@ -37,10 +37,13 @@
           当前题目
           <select id="question-select"></select>
         </label>
+        <label class="field field-rate">
+          播放倍速
+          <input id="speak-rate" type="range" min="0.5" max="2" step="0.05" value="1" />
+          <span id="speak-rate-value">1.00</span>
+        </label>
         <button type="button" id="btn-speak" class="secondary">扬声器读题</button>
         <button type="button" id="btn-speak-stop" class="secondary">停止朗读</button>
-        <button type="button" id="btn-record">按下开始识别</button>
-        <span id="countdown" class="api-status">限时 10s</span>
       </section>
 
       <section id="question-preview" class="question-preview" aria-live="polite">
@@ -48,26 +51,17 @@
         <ol class="qp-options" hidden></ol>
       </section>
 
-      <p id="status" class="status" role="status">请选择题目，扬声器读题后开始作答</p>
+      <div id="raise-countdown" class="raise-countdown" aria-live="assertive" hidden>3</div>
 
-      <section class="result" aria-live="polite">
-        <div class="result-row">
-          <span class="label">转写</span>
-          <span id="out-transcript">—</span>
-        </div>
-        <div class="result-row">
-          <span class="label">标准答案</span>
-          <span id="out-expected">—</span>
-        </div>
-        <div class="result-row">
-          <span class="label">匹配分</span>
-          <span id="out-score">—</span>
-        </div>
-        <div class="result-row">
-          <span class="label">结果</span>
-          <span id="out-passed" class="pill idle">未测</span>
-        </div>
+      <section class="race-panel" aria-live="polite">
+        <div id="race-banner" class="race-banner" hidden></div>
+        <ul id="score-demo" class="score-demo"></ul>
+        <p id="detect-status" class="detect-status">后台检测：启动中…</p>
       </section>
+
+      <video id="bg-video" class="bg-video" playsinline muted></video>
+
+      <p id="status" class="status" role="status">请选择题目后点「扬声器读题」</p>
     </main>
     <script type="module" src="/src/app/speech-board-online.ts"></script>
   </body>

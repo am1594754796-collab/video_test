@@ -71,7 +71,12 @@ describe("evaluateHandRaise (MediaPipe joints)", () => {
 
 describe("SeatRaiseTracker", () => {
   it("requires N consecutive MediaPipe frames before confirming raise", () => {
-    const t = new SeatRaiseTracker({ minFrames: 3, scoreThreshold: 0, smoothAlpha: 0 });
+    const t = new SeatRaiseTracker({
+      minFrames: 3,
+      scoreThreshold: 0,
+      smoothAlpha: 0,
+      requirePaddle: false,
+    });
     expect(t.update(leftClearRaise(), 1000).raised).toBe(false);
     expect(t.update(leftClearRaise(), 1050).raised).toBe(false);
     const c = t.update(leftClearRaise(), 1100);
@@ -80,7 +85,12 @@ describe("SeatRaiseTracker", () => {
   });
 
   it("confirms on the first qualifying frame when minFrames is 1", () => {
-    const t = new SeatRaiseTracker({ minFrames: 1, scoreThreshold: 0, smoothAlpha: 0 });
+    const t = new SeatRaiseTracker({
+      minFrames: 1,
+      scoreThreshold: 0,
+      smoothAlpha: 0,
+      requirePaddle: false,
+    });
     const u = t.update(leftClearRaise(), 2000);
     expect(u.raised).toBe(true);
     expect(u.rawRaised).toBe(true);

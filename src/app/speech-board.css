@@ -58,6 +58,15 @@ header h1 {
   color: var(--muted);
 }
 
+.field-rate {
+  min-width: 9rem;
+}
+
+.field-rate input[type="range"] {
+  width: 8.5rem;
+  accent-color: var(--accent);
+}
+
 .field select {
   min-width: 12rem;
   padding: 0.45rem 0.5rem;
@@ -142,6 +151,23 @@ button.recording {
   color: var(--muted);
 }
 
+.raise-countdown {
+  margin: 1rem 0 0.5rem;
+  min-height: 4.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 4rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.raise-countdown[hidden] {
+  display: none;
+}
+
 .result {
   margin-top: 1.5rem;
   padding: 1rem 1.1rem;
@@ -210,4 +236,128 @@ button.recording {
 
 .question-preview .qp-options li {
   margin: 0.15rem 0;
+}
+
+.race-panel {
+  margin: 0.75rem 0 1rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.race-banner {
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  font-weight: 650;
+  font-size: 1.05rem;
+  text-align: center;
+  border: 1px solid transparent;
+}
+
+.race-banner.early {
+  background: color-mix(in srgb, var(--bad) 22%, #151c24);
+  border-color: color-mix(in srgb, var(--bad) 55%, transparent);
+  color: #ffb4b8;
+  animation: race-flash 0.7s ease;
+}
+
+.race-banner.win {
+  background: color-mix(in srgb, var(--ok) 22%, #151c24);
+  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+  color: #9af0d4;
+  animation: race-flash 0.7s ease;
+}
+
+.race-banner.open {
+  background: color-mix(in srgb, var(--accent) 18%, #151c24);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: #b8d9ff;
+}
+
+.race-banner[hidden] {
+  display: none;
+}
+
+@keyframes race-flash {
+  0% {
+    transform: scale(0.98);
+    opacity: 0.65;
+  }
+  40% {
+    transform: scale(1.02);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.score-demo {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.score-demo:empty {
+  display: none;
+}
+
+.score-demo li {
+  min-width: 4.5rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--idle);
+  background: #151c24;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.score-demo li .num {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.score-demo li .pts {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-demo li.penalty {
+  border-color: color-mix(in srgb, var(--bad) 60%, var(--idle));
+  animation: race-flash 0.6s ease;
+}
+
+.score-demo li.winner {
+  border-color: color-mix(in srgb, var(--ok) 70%, var(--idle));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 40%, transparent);
+}
+
+.detect-status {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* Keep video in the render tree (not display:none) so frames decode for MediaPipe. */
+.bg-video {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  width: 200px;
+  max-width: 36vw;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--idle);
+  background: #0a0e12;
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.bg-video.live {
+  opacity: 0.7;
 }

@@ -1,10 +1,10 @@
-# 语音识别 V2.0 · 移植配置手册
+# 读题 · CosyVoice · 移植配置手册
 
-> **换机总入口（含人脸 + 语义统一 `api.env`）：** [`deploy/README.md`](../deploy/README.md)  
+> **换机总入口（读题统一 `api.env`）：** [`deploy/README.md`](../deploy/README.md)  
 > **换 API 厂商：** [`API-PROVIDERS.md`](./API-PROVIDERS.md)
 
 > 目标：换机 `git clone` 后，按本文配置，复现当前能力：  
-> **Web Speech 实时听写 + 答案库相对路径 + 线上语义 + ≥90% 匹配 + 10s 限时（通过/超时即停）**。  
+> **CosyVoice 2 读题（语速可调、音色可指定）+ 题库相对路径。听写与答案匹配已移除。**  
 > 页面：http://localhost:5173/speech-online.html  
 > 一键脚本：`start-speech-online.bat`
 
@@ -17,10 +17,9 @@
 | 系统 | Windows（本项目 bat 按 Windows 编写） |
 | Node.js | LTS（能跑 `npm` / Vite） |
 | Python | 3.10+（推荐 3.12） |
-| 浏览器 | **Chrome 或 Edge**（Web Speech） |
-| 网络 | 要联网（听写 + DeepSeek API） |
-| 麦克风 | 系统允许浏览器使用麦克风 |
-| DeepSeek Key | 自行在 DeepSeek 开放平台申请（**不要提交到 Git**） |
+| 浏览器 | Chrome 或 Edge |
+| 网络 | 要联网（CosyVoice） |
+| 百炼 Key | 阿里云百炼 `LLM_API_KEY`（**不要提交到 Git**） |
 
 仓库：https://github.com/am1594754796-collab/video_test  
 
@@ -73,7 +72,7 @@ cd ..
 |------|------------|------------|
 | `python/data/answers.json` | 是 | 改题目 / 标准答案 |
 | `python/data/answers.path` | 是 | 一行相对路径，指向要用哪个 JSON |
-| `python/data/api.env` | **否**（gitignore） | **推荐**：统一 Key（语音+人脸），每台机器新建 |
+| `python/data/api.env` | **否**（gitignore） | **推荐**：读题 Key，每台机器新建 |
 | `python/data/api.env.example` | 是 | 复制模板用，勿把真 Key 写回 example |
 | `python/data/online.env` | **否**（gitignore） | 旧配置，仍兼容；新机器请用 `api.env` |
 | `python/data/online.env.example` | 是 | 旧模板 |
@@ -122,7 +121,7 @@ data/answers.json
 
 ---
 
-## 5. 配置统一 API（语音语义 + 千问人脸）
+## 5. 配置统一 API（CosyVoice 读题）
 
 ### 5.1 生成本地密钥文件
 
@@ -142,7 +141,9 @@ LLM_API_KEY=这里填你的阿里云 DashScope（千问）密钥
 
 说明：
 
-- LLM_API_KEY：语音与人脸 **共用** 一把 Key
+- LLM_API_KEY：供 **CosyVoice 读题** 使用
+- 读题默认模型 `cosyvoice-v2`、音色 `longxiaochun_v2`，页面语速滑块范围 0.5–2.0
+- 要锁定复刻音色：在 `api.env` 设置 `TTS_VOICE=` 控制台音色 ID（须与 `TTS_MODEL` 匹配）
 - 地址、模型、开关已内置，不要改
 - 不要把填好 Key 的 api.env 提交到 Git
 - 换机后必须重新创建并填写（不会随仓库带走）
@@ -187,25 +188,19 @@ npm.cmd run dev
 
 ### 6.3 验收清单（与当前功能对齐）
 
-1. 页顶显示 **Python 匹配 API: 已连接**  
-2. 答案库路径为 `data/answers.json`（或你配置的路径），题目下拉有内容  
-3. 选 **Q3** → **按下开始识别**  
-4. 出现 **剩余 Ns** 倒计时（共 **10s**）  
-5. 说话时转写实时更新，分数含 **字形 · 拼音 · 语义**  
-6. **答对（≥90%）** → 立即停止听写  
-7. **未答对直到 10s** → 自动结束并给出最终匹配结果  
+1. 页顶显示 **Python API 已连接 · 读题 cosyvoice-v2**  
+2. 题库路径为 `data/answers.json`（或你配置的路径），题目下拉有内容  
+3. 选一题 → 调语速 → **扬声器读题**  
+4. 听到题干与选项，**不念**标准答案  
+5. **停止朗读**可立刻打断  
 
 ---
 
-## 7. 匹配规则（当前实现）
+## 7. 读题说明
 
-总分 = **max(字形相似度, 拼音相似度, 语义分)**  
-
-- 阈值：**≥ 0.90** 判通过  
-- 语义：DeepSeek Chat 判「学生说法是否答对标准答案」（适合整句口语）  
-- 无 Key / 语义失败时：仍可用字形 + 拼音（语义项可能为「—」）
-
-限时：**10 秒**（写在前端 `speech-board-online.ts` 的 `ANSWER_LIMIT_MS`）
+- 模型默认 `cosyvoice-v2`，音色默认 `longxiaochun_v2`  
+- 语速：页面滑块 **0.5–2.0**  
+- 朗读文本：题干 + 选项 A–D；**从不朗读** `answer` 字段  
 
 ---
 
@@ -213,12 +208,10 @@ npm.cmd run dev
 
 | 变量 | 示例 | 作用 |
 |------|------|------|
-| `SPEECH_SEMANTIC_MODE` | `online` / `offline` / `off` | 语义模式 |
-| `SPEECH_LLM_API_KEY` | `sk-...` | 线上模型密钥 |
-| `SPEECH_LLM_BASE_URL` | `https://api.deepseek.com` | API 根地址 |
-| `SPEECH_LLM_MODEL` | `deepseek-chat` | 模型名 |
-| `SPEECH_ANSWERS_PATH` | `data/answers.json` | 启动时指定答案库（相对 `python/`） |
-| `SPEECH_SEMANTIC` | `0` | 强制关闭语义 |
+| `TTS_MODEL` | `cosyvoice-v2` | 读题模型 |
+| `TTS_VOICE` | `longxiaochun_v2` | 系统或复刻音色 ID |
+| `TTS_WORKSPACE_ID` | 业务空间 ID | 走新域名时填写 |
+| `SPEECH_ANSWERS_PATH` | `data/answers.json` | 启动时指定题库（相对 `python/`） |
 
 ---
 
@@ -227,8 +220,8 @@ npm.cmd run dev
 | 现象 | 处理 |
 |------|------|
 | Python API: 未连接 | 确认 8765 已起；Vite 代理 `/api` → `127.0.0.1:8765` |
-| 语义一直是「—」 | 检查 `online.env` 是否存在、Key 是否正确；重启 API |
-| 不识别语音 | 换 Chrome/Edge；检查麦克风权限；须 localhost/HTTPS |
+| 读题未配置 / 503 | 检查 `api.env` 的 `LLM_API_KEY`；重启 API |
+| 播报失败 | 看 API 日志；确认百炼已开通 CosyVoice v2 |
 | 题目为空 | 检查 `answers.path` 与 JSON 是否存在、格式是否合法 |
 | pip 安装失败 | 换清华镜像；勿复制旧 `.venv` |
 | Git 推不上去 | 检查网络 / Clash 代理后再 `git push` |

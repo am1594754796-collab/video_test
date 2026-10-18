@@ -57,15 +57,28 @@ function onNumberingLocked(nextSeats: number[]): void {
   setStatus("编号已锁定 · 等待视觉页「最先举手」");
 }
 
-function onFirstRaise(personIndex: number): void {
+function ensureSeat(personIndex: number): void {
   if (!seats.includes(personIndex)) {
     seats = [...seats, personIndex].sort((a, b) => a - b);
-    if (!scores.has(personIndex)) scores.set(personIndex, 0);
   }
+  if (!scores.has(personIndex)) scores.set(personIndex, 0);
+}
+
+function onFirstRaise(personIndex: number): void {
+  ensureSeat(personIndex);
   flashingIndex = personIndex;
   renderScoreBoard();
   setStatus(`#${personIndex} 最先举手 · 持续闪烁 · 请在语音页作答`);
   setBusStatus(`抢答中：#${personIndex}`);
+}
+
+function onEarlyRaise(personIndex: number): void {
+  ensureSeat(personIndex);
+  const next = Math.max(0, (scores.get(personIndex) ?? 0) - 1);
+  scores.set(personIndex, next);
+  renderScoreBoard();
+  setStatus(`#${personIndex} 提前举手 · 扣 1 分 → ${next}`);
+  setBusStatus(`提前举手：#${personIndex} -1`);
 }
 
 function onAnswerPassed(transcript?: string): void {
@@ -108,6 +121,9 @@ function handleEvent(event: ClassroomEvent): void {
       break;
     case "first-raise":
       onFirstRaise(event.personIndex);
+      break;
+    case "early-raise":
+      onEarlyRaise(event.personIndex);
       break;
     case "race-reset":
       onRaceReset();

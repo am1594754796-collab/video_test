@@ -1,9 +1,8 @@
 /**
  * After numbering lock, identity is the seat index — not MediaPipe trackId.
- * Each frame we re-associate detections to fixed seats by face (preferred) then position.
+ * Each frame we re-associate detections to fixed seats by position.
  */
 
-import { cosineSimilarity, type FaceDescriptor } from "./faceDescriptor";
 import type { PoseLandmark } from "./isHandRaised";
 import { emaBlendLandmarks } from "./landmarkSmooth";
 import { RaiseDebouncer } from "./raiseDebouncer";
@@ -13,7 +12,6 @@ export type SeatDetection = {
   x: number;
   y: number;
   landmarks: readonly PoseLandmark[];
-  faceDescriptor?: FaceDescriptor | null;
 };
 
 export type SeatAnchor = {
@@ -23,7 +21,6 @@ export type SeatAnchor = {
   landmarks: readonly PoseLandmark[] | null;
   debouncer: RaiseDebouncer;
   missed: number;
-  faceDescriptor: FaceDescriptor | null;
   /** True when a live detection was bound this frame. */
   fresh: boolean;
 };
@@ -36,8 +33,6 @@ export type SeatMatchOptions = {
   /** Frames a seat may miss before landmarks clear. */
   maxMissed?: number;
   minFrames?: number;
-  /** Min cosine similarity to claim a seat by face before position. */
-  minFaceSimilarity?: number;
 };
 
 function dist(
@@ -61,7 +56,6 @@ export function createSeatAnchors(
       landmarks: null as readonly PoseLandmark[] | null,
       debouncer: new RaiseDebouncer({ minFrames }),
       missed: 0,
-      faceDescriptor: s.faceDescriptor ?? null,
       fresh: false,
     }))
     .sort((a, b) => a.index - b.index);
@@ -73,14 +67,10 @@ function bindDetToSeat(seat: SeatAnchor, det: SeatDetection): void {
   seat.landmarks = det.landmarks;
   seat.missed = 0;
   seat.fresh = true;
-  if (det.faceDescriptor && det.faceDescriptor.length) {
-    seat.faceDescriptor = det.faceDescriptor;
-  }
 }
 
 /**
- * Greedy seat↔detection match. Seat `index` never changes.
- * Face templates win over position when both sides have descriptors.
+ * Greedy seat↔detection match by position. Seat `index` never changes.
  */
 export function matchDetectionsToSeats(
   anchors: readonly SeatAnchor[],
@@ -90,7 +80,6 @@ export function matchDetectionsToSeats(
   const maxDistance = options.maxDistance ?? 0.2;
   const yWeight = options.yWeight ?? 0.4;
   const maxMissed = options.maxMissed ?? 12;
-  const minFaceSimilarity = options.minFaceSimilarity ?? 0.82;
 
   const next = anchors.map((a) => ({
     ...a,
@@ -101,26 +90,6 @@ export function matchDetectionsToSeats(
 
   const usedSeat = new Set<number>();
   const usedDet = new Set<number>();
-
-  type FacePair = { si: number; di: number; sim: number };
-  const facePairs: FacePair[] = [];
-  for (let si = 0; si < next.length; si++) {
-    const template = next[si]!.faceDescriptor;
-    if (!template?.length) continue;
-    for (let di = 0; di < detections.length; di++) {
-      const live = detections[di]!.faceDescriptor;
-      if (!live?.length) continue;
-      const sim = cosineSimilarity(template, live);
-      if (sim >= minFaceSimilarity) facePairs.push({ si, di, sim });
-    }
-  }
-  facePairs.sort((a, b) => b.sim - a.sim);
-  for (const { si, di } of facePairs) {
-    if (usedSeat.has(si) || usedDet.has(di)) continue;
-    bindDetToSeat(next[si]!, detections[di]!);
-    usedSeat.add(si);
-    usedDet.add(di);
-  }
 
   type Pair = { si: number; di: number; d: number };
   const pairs: Pair[] = [];
@@ -184,7 +153,7 @@ export function bindPosesToSeatsByIndex(
       if (seat.missed > maxMissed) seat.landmarks = null;
       return seat;
     }
-    // Pose-assisted track: EMA-smooth MediaPipe joints; keep seat x/y on locked face.
+    // Pose-assisted track: EMA-smooth MediaPipe joints; keep locked seat x/y.
     seat.landmarks = emaBlendLandmarks(seat.landmarks, pose.landmarks, 0.45);
     seat.missed = 0;
     seat.fresh = true;
@@ -199,6 +168,5 @@ export function seatsToNumberingSlots(anchors: readonly SeatAnchor[]): Numbering
     trackId: a.index,
     x: a.x,
     y: a.y,
-    faceDescriptor: a.faceDescriptor,
   }));
 }

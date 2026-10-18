@@ -1,6 +1,6 @@
 # API Providers（可插拔接口）
 
-教室项目把**人脸检测**与**答对语义**做成 Provider：页面只打本机 API，换厂商时改 `api.env` + 加一个实现类，不必改前端。
+教室项目把云端能力做成可插拔配置。读题走 CosyVoice（`LLM_API_KEY`）；下列语义 Provider 为遗留代码，**读题页已不再调用匹配**。
 
 换机配置入口：[`deploy/README.md`](../deploy/README.md)
 
@@ -14,8 +14,7 @@
 |--------|------|
 | 网关 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | 语义模型 | `qwen-plus` |
-| 人脸模型 | `qwen-vl-plus` |
-| 人脸 Provider | `qwen` |
+| 读题 | `cosyvoice-v2` |
 | 语义 Provider | `online` |
 
 下面变量仅开发者覆盖用（测试或换厂商），不要写进换机模板：
@@ -25,11 +24,9 @@
 | `LLM_API_KEY` | 共用密钥（**唯一对外项**） |
 | `LLM_BASE_URL` | OpenAI 兼容根路径 |
 | `LLM_CHAT_MODEL` | 文本模型（语义） |
-| `LLM_VISION_MODEL` | 视觉模型（人脸，须多模态） |
-| `VISION_FACE_PROVIDER` | 人脸实现 `qwen` \| `off`（骨架：`openai`） |
 | `SPEECH_SEMANTIC_PROVIDER` | 语义实现 `online` \| `off`（另有本地 `offline`） |
 
-兼容旧名：`VISION_FACE_MODE`、`SPEECH_SEMANTIC_MODE`（未设 `*_PROVIDER` 时生效）。
+兼容旧名：`SPEECH_SEMANTIC_MODE`（未设 `SPEECH_SEMANTIC_PROVIDER` 时生效）。
 
 ---
 
@@ -37,30 +34,13 @@
 
 ```
 python/providers/
-  base.py                 # FaceDetector / SemanticJudge Protocol
-  face/
-    factory.py            # get_face_detector()
-    qwen.py               # 已实现（包装 vision_face.detect_faces_qwen）
-    off.py
-    openai_vision.py      # 骨架，未接线
+  base.py                 # SemanticJudge Protocol
   semantic/
     factory.py            # get_semantic_judge()
     online.py             # 已实现（包装 semantic_online）
     off.py
     deepseek.py           # 骨架；也可把 BASE_URL 指到 DeepSeek 用 online
 ```
-
-### FaceDetector
-
-```python
-class FaceDetector(Protocol):
-    name: str
-    def configured(self) -> bool: ...
-    def detect(self, image_base64: str, *, max_faces: int = 6, mime: str = "image/jpeg") -> list[dict]: ...
-    def status(self) -> dict: ...
-```
-
-返回框归一化到 `[0,1]`，字段：`x_min,y_min,width,height,score`（可含 `cx,cy`）。HTTP：`POST /api/vision/detect-faces`。
 
 ### SemanticJudge
 
@@ -75,19 +55,6 @@ class SemanticJudge(Protocol):
 HTTP 匹配链路经 `speech_answer.semantic.semantic_score` → Provider。
 
 ---
-
-## 如何新增一个人脸厂商
-
-1. 在 `python/providers/face/` 新建 `my_vendor.py`，实现与 `QwenFaceDetector` 相同方法。
-2. 在 `face/factory.py` 的 `get_face_detector()` 注册：
-
-```python
-if name == "my_vendor":
-    return MyVendorFaceDetector()
-```
-
-3. `api.env` 设 `VISION_FACE_PROVIDER=my_vendor`，填好该厂商需要的 Key / URL / Model。
-4. 重启 uvicorn；`GET /api/health` 看 `vision_face_provider` / `vision_face_configured`。
 
 **不要**在前端写第三方 API Key；一律经 `8765`。
 
@@ -107,10 +74,8 @@ if name == "my_vendor":
 
 `GET /api/health` 额外包含：
 
-- `vision_face_provider` / `vision_face_configured`
 - `speech_semantic_provider` / `speech_semantic_configured`
-
-`POST /api/vision/detect-faces` 响应可含 `provider` 字段。
+- `tts_model` / `tts_configured`
 
 ---
 
@@ -118,4 +83,4 @@ if name == "my_vendor":
 
 - 大目录按 vision/speech/scoreboard 物理拆分
 - `server.py` 拆成 FastAPI router
-- 真正接通 `openai_vision` / `deepseek` 骨架类
+- 真正接通 `deepseek` 骨架类

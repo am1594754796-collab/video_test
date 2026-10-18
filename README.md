@@ -1,6 +1,6 @@
 # 教室抢答模块（视觉 + 语音）
 
-教室场景本地网页：**视觉举手识别** + **语音作答匹配** + **独立计分板**。各页面解耦，**各自单独启动**（一个启动脚本只打开对应页面）。
+教室场景本地网页：**视觉举手识别** + **CosyVoice 读题** + **独立计分板**。各页面解耦，**各自单独启动**（一个启动脚本只打开对应页面）。
 
 | 页面 | 地址 | 启动 | 需要 |
 |------|------|------|------|
@@ -8,9 +8,9 @@
 | **人物编号 · 视频回放检测** | http://localhost:5173/people-video.html | `start-people-video.bat` | **仅 Node.js** |
 | **人物编号 · 相机快版** | http://localhost:5173/people-fast.html | `start-people-fast.bat` | **仅 Node.js** + 相机 |
 | **计分板（仅展示）** | http://localhost:5173/scoreboard.html | `start-scoreboard.bat` | 同域其它页即可 |
-| **语音作答 · 在线识别** | http://localhost:5173/speech-online.html | `start-speech-online.bat` | Node.js **+ Python** · 联网 · Chrome/Edge |
+| **读题 · CosyVoice** | http://localhost:5173/speech-online.html | `start-speech-online.bat` | Node.js **+ Python** · 联网 |
 
-视觉 / 语音各自独立；计分板通过浏览器跨标签页总线订阅事件，**本页不嵌相机、不嵌语音**。
+视觉 / 读题各自独立；计分板通过浏览器跨标签页总线订阅事件，**本页不嵌相机、不嵌读题**。
 
 仓库：https://github.com/am1594754796-collab/video_test
 
@@ -25,7 +25,7 @@
 | 端口 | 服务 |
 |------|------|
 | `5173` | Vite 前端（所有网页共用） |
-| `8765` | Python API（**仅语音作答**需要） |
+| `8765` | Python API（**读题**需要） |
 
 - **不要同时开多个** `start-*.bat`（会抢 `5173`）。
 - 已有 Vite 在跑时：只需在浏览器**另开标签**访问其它页面地址。
@@ -83,15 +83,24 @@ REM 或双击对应 start-people-*.bat / start-people-video.bat
 
 ---
 
-## 语音作答 · 在线识别
+## 读题 · CosyVoice
 
 | 项 | 说明 |
 |----|------|
-| 启动 | `start-speech-online.bat`（会起 Python API + Vite，只开语音页） |
+| 启动 | `start-speech-online.bat`（会起 Python API + Vite，只开读题页） |
 | 页面 | http://localhost:5173/speech-online.html |
-| 需要 | Node + Python；联网；麦克风；Chrome / Edge |
+| 需要 | Node + Python；联网；Chrome / Edge |
 
-**操作：** API 已连接 → 选题 →「扬声器读题」→「开始识别」→ **10 秒内**边说边匹配 → 答对即停 / 超时结束。
+**操作：** 先预生成语音 → API 已连接 → 选题 →「扬声器读题」（播放题库 MP3，读完后举手倒计时）。本页**不做**听写与答案匹配。
+
+**预生成语音**（改题后重跑）：
+
+```bat
+cd python
+.venv\Scripts\python.exe -m speech_answer.prebuild_audio
+```
+
+MP3 写在 `python/data/audio/`（见该目录 README）。
 
 **配置：**
 
@@ -106,7 +115,7 @@ copy deploy\api.env.example python\data\api.env
 
 编辑 `python\data\api.env`，只填 `LLM_API_KEY=...`，改完**重启** uvicorn。详见 [`deploy/README.md`](deploy/README.md)。
 
-答案库默认 `python/data/answers.json`（由 `answers.path` 指向）。匹配 ≥ **90%** 判对。
+题库默认 `python/data/answers.json`（由 `answers.path` 指向），读题使用其中的 `prompt` / `options`。
 
 ---
 
@@ -117,7 +126,22 @@ copy deploy\api.env.example python\data\api.env
 | 启动 | `start-scoreboard.bat`（**只开计分板**） |
 | 页面 | http://localhost:5173/scoreboard.html |
 
-联调：另开视觉页 + 语音页（同源同端口）→ 锁定编号 → 最先举手闪烁 → 语音答对 +1 停闪 → 视觉页「下一轮」。
+联调：另开视觉页（同源同端口）→ 锁定编号 → 最先举手闪烁 → 视觉页「下一轮」。读题页不参与计分。
+
+---
+
+## 扫码打分（独立）
+
+与上面的计分板无关。本机 Flask 服务，手机扫六个二维码，分数记到你指定的编号。
+
+| 项 | 说明 |
+|----|------|
+| 启动 | `start-score-qr.bat` |
+| 管理页 | http://127.0.0.1:8000 （改编号、看二维码、看总分和平均分） |
+| 按编号调用 | `GET http://127.0.0.1:8000/api/summary/编号` → `count`、`total`、`average` |
+| 数据 | `python/score_qr/data/scores.db`（不进 Git） |
+
+手机和电脑需在同一 Wi-Fi。首次运行若系统询问防火墙，选择允许访问。
 
 ---
 
@@ -131,6 +155,7 @@ copy deploy\api.env.example python\data\api.env
 | `start-scoreboard.bat` | 计分板 |
 | `start-speech-online.bat` | 语音在线（含 Python API） |
 | `start-python-api.bat` | 仅 Python API（8765） |
+| `start-score-qr.bat` | 扫码打分（8000，独立） |
 
 已有服务在跑时，浏览器直接打开上表地址即可，无需再跑第二个 `start-*`。
 

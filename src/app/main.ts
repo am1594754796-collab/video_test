@@ -1,14 +1,15 @@
 /**
- * Single-person debug shell: stabilize hand-raise detection.
+ * Single-person debug shell: white raise-paddle + weak pose assist.
  * numPoses = 1 (no multi-person detector thrash).
- * Uses the same classroom raise predicate as people-fast / people-video.
+ * Same paddle fusion as people-fast / people-video (seat #1 = white).
  */
 
 import { PoseLandmarker, type NormalizedLandmark } from "@mediapipe/tasks-vision";
 import {
   createPoseLandmarker,
   detectPosesForVideo,
-  evaluateHandRaise,
+  evaluatePaddleRaise,
+  framePixelsFromCanvas,
   RaiseDebouncer,
   startCamera,
   type CameraHandle,
@@ -25,6 +26,8 @@ const btnStop = document.querySelector<HTMLButtonElement>("#btn-stop")!;
 const inputMargin = document.querySelector<HTMLInputElement>("#input-margin")!;
 const inputFrames = document.querySelector<HTMLInputElement>("#input-frames")!;
 
+const frameCanvas = document.createElement("canvas");
+
 /** EMA smoothing factor for landmarks (0=no smooth, closer to 1=heavier). */
 const SMOOTH = 0.35;
 /** Keep drawing last pose if detection drops briefly. */
@@ -40,11 +43,6 @@ let lastPoseAt = 0;
 let lastShownRaised: boolean | null = null;
 let canvasSized = false;
 
-function readMargin(): number {
-  const n = Number(inputMargin.value);
-  return Number.isFinite(n) ? n : 0.025;
-}
-
 function readMinFrames(): number {
   const n = Number(inputFrames.value);
   return Math.max(1, Number.isFinite(n) ? n : 3);
@@ -57,7 +55,7 @@ function setStatus(text: string): void {
 function setRaisedUi(raised: boolean): void {
   if (lastShownRaised === raised) return;
   lastShownRaised = raised;
-  raisePill.textContent = raised ? "举手" : "未举手";
+  raisePill.textContent = raised ? "举牌" : "未举牌";
   raisePill.classList.toggle("raised", raised);
 }
 
@@ -73,9 +71,18 @@ function ensureCanvasSize(): boolean {
   if (!canvasSized || canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
     canvas.height = h;
+    frameCanvas.width = w;
+    frameCanvas.height = h;
     canvasSized = true;
   }
   return true;
+}
+
+function captureFrame(): ReturnType<typeof framePixelsFromCanvas> {
+  const fctx = frameCanvas.getContext("2d", { willReadFrequently: true });
+  if (!fctx) return null;
+  fctx.drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
+  return framePixelsFromCanvas(frameCanvas);
 }
 
 function smoothLandmarks(next: NormalizedLandmark[]): NormalizedLandmark[] {
@@ -122,7 +129,7 @@ function drawPose(landmarks: readonly { x: number; y: number }[], raised: boolea
     ((landmarks[POSE.LEFT_SHOULDER]?.y ?? 0.3) + (landmarks[POSE.RIGHT_SHOULDER]?.y ?? 0.3)) / 2;
   ctx.fillStyle = raised ? "#2dd4a8" : "#e7ecf1";
   ctx.font = "bold 22px Segoe UI, sans-serif";
-  ctx.fillText(raised ? "举手" : "未举手", midX * w - 28, midY * h - 14);
+  ctx.fillText(raised ? "白牌" : "未举牌", midX * w - 28, midY * h - 14);
 }
 
 function loop(nowMs: number): void {
@@ -135,22 +142,19 @@ function loop(nowMs: number): void {
   lastTs = nowMs;
 
   const poses = detectPosesForVideo(landmarker, video, nowMs);
-  const margin = readMargin();
+  void inputMargin; // kept in UI for future pose-assist tuning
 
   if (poses.length > 0) {
     lastPoseAt = nowMs;
     const landmarks = smoothLandmarks(poses[0].landmarks);
-    const ev = evaluateHandRaise(landmarks, {
-      margin,
-      minVisibility: 0.25,
-      otherLandmarks: poses.slice(1).map((p) => p.landmarks),
-    });
+    const frame = captureFrame();
+    const ev = evaluatePaddleRaise(landmarks, frame, "white");
     const raised = debouncer.update(ev.raised && ev.score >= 0.01);
     drawPose(landmarks, raised);
     setRaisedUi(raised);
     const side = ev.side ?? "-";
     setStatus(
-      `单人调试 · ${raised ? "举手" : "未举手"} · side=${side} · score=${ev.score.toFixed(3)} · margin=${margin} · minFrames=${readMinFrames()}`,
+      `单人调试 · 白牌 · ${raised ? "举牌" : "未举牌"} · paddle=${ev.paddleScore.toFixed(2)} · pose=${ev.poseAssist.toFixed(2)} · side=${side} · minFrames=${readMinFrames()}`,
     );
     return;
   }
@@ -165,7 +169,7 @@ function loop(nowMs: number): void {
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   setRaisedUi(false);
-  setStatus("单人调试 · 未检测到人体 — 请正对镜头、上半身入画");
+  setStatus("单人调试 · 未检测到人体 — 请正对镜头、上半身入画，举起白色举手牌");
 }
 
 async function onStart(): Promise<void> {
@@ -187,7 +191,7 @@ async function onStart(): Promise<void> {
     lastShownRaised = null;
     canvasSized = false;
     btnStop.disabled = false;
-    setStatus("单人调试运行中 · 请把手举过肩/贴近头部（与多人页同一套判定）");
+    setStatus("单人调试运行中 · 举起白色举手牌（手略抬即可，牌色权重大）");
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(loop);
   } catch (err) {

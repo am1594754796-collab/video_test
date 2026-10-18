@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   indexByTrackIdFromSlots,
   rebindSlotsToTracks,
-  shouldRefreshCloudFaces,
   slotsFromSort,
 } from "../../src/vision/detect/numberingSlots";
 
@@ -13,8 +12,8 @@ describe("numberingSlots", () => {
       { index: 2, id: 20, x: 0.7, y: 0.4 },
     ]);
     expect(slots).toEqual([
-      { index: 1, trackId: 10, x: 0.2, y: 0.4, faceDescriptor: null },
-      { index: 2, trackId: 20, x: 0.7, y: 0.4, faceDescriptor: null },
+      { index: 1, trackId: 10, x: 0.2, y: 0.4 },
+      { index: 2, trackId: 20, x: 0.7, y: 0.4 },
     ]);
   });
 
@@ -60,81 +59,21 @@ describe("numberingSlots", () => {
     expect(next.find((s) => s.index === 1)?.trackId).toBe(10);
   });
 
-  it("rebinds orphaned slot by face even when position is far", () => {
-    const faceA = Array.from({ length: 8 }, (_, i) => (i === 0 ? 1 : 0));
-    const faceB = Array.from({ length: 8 }, (_, i) => (i === 1 ? 1 : 0));
-    const slots = [
-      {
-        index: 1,
-        trackId: null as number | null,
-        x: 0.2,
-        y: 0.4,
-        faceDescriptor: faceA,
-      },
-      {
-        index: 2,
-        trackId: 20 as number | null,
-        x: 0.8,
-        y: 0.4,
-        faceDescriptor: faceB,
-      },
-    ];
-    // New track for person 1 appears on the right (far from seat x=0.2) but face matches A.
-    const next = rebindSlotsToTracks(
-      slots,
-      [
-        { trackId: 99, x: 0.85, y: 0.4, faceDescriptor: faceA },
-        { trackId: 20, x: 0.8, y: 0.4, faceDescriptor: faceB },
-      ],
-      { maxDistance: 0.2, minFaceSimilarity: 0.9 },
-    );
-    expect(next.find((s) => s.index === 1)?.trackId).toBe(99);
-    expect(next.find((s) => s.index === 2)?.trackId).toBe(20);
-  });
-
-  it("keeps seat index and face template while the person is missing", () => {
-    const faceA = Array.from({ length: 8 }, (_, i) => (i === 0 ? 1 : 0));
+  it("keeps the seat index while the person is missing, then rebinds by position", () => {
     const slots = [
       {
         index: 3,
         trackId: 10 as number | null,
         x: 0.4,
         y: 0.4,
-        faceDescriptor: faceA,
       },
     ];
     const orphaned = rebindSlotsToTracks(slots, []);
     expect(orphaned[0].index).toBe(3);
     expect(orphaned[0].trackId).toBeNull();
-    expect(orphaned[0].faceDescriptor).toEqual(faceA);
 
-    const back = rebindSlotsToTracks(orphaned, [
-      { trackId: 77, x: 0.41, y: 0.4, faceDescriptor: faceA },
-    ]);
+    const back = rebindSlotsToTracks(orphaned, [{ trackId: 77, x: 0.41, y: 0.4 }]);
     expect(back[0].index).toBe(3);
     expect(back[0].trackId).toBe(77);
-  });
-
-  it("gates cloud face refresh: missing seats only, 1s throttle, skip in-flight", () => {
-    const base = {
-      missingSeat: true,
-      nowMs: 2000,
-      lastFaceTs: 500,
-      minIntervalMs: 1000,
-      inFlight: false,
-    };
-    expect(shouldRefreshCloudFaces({ ...base, missingSeat: false })).toBe(false);
-    expect(shouldRefreshCloudFaces({ ...base, nowMs: 1400 })).toBe(false);
-    expect(shouldRefreshCloudFaces(base)).toBe(true);
-    expect(shouldRefreshCloudFaces({ ...base, inFlight: true })).toBe(false);
-    expect(
-      shouldRefreshCloudFaces({
-        ...base,
-        force: true,
-        missingSeat: false,
-        inFlight: false,
-        nowMs: 501,
-      }),
-    ).toBe(true);
   });
 });
