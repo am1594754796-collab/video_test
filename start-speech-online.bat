@@ -4,8 +4,8 @@ setlocal
 cd /d "%~dp0"
 
 echo ========================================
-echo  CosyVoice read-aloud (this page only)
-echo  Vite + Python API
+echo  Classroom quiz: vision + read-aloud + voice answers
+echo  Vite + Python API, one browser page
 echo ========================================
 echo.
 
@@ -68,7 +68,7 @@ timeout /t 2 /nobreak >nul
 
 echo.
 echo Page: http://127.0.0.1:5173/speech-online.html
-echo Need network + Chrome/Edge for CosyVoice. Do not run multiple start-*.bat at once.
+echo Allow camera and microphone in Chrome/Edge. Do not run multiple start-*.bat at once.
 echo.
 
 call "%~dp0_dev-open.bat" "speech-online.html"

@@ -1,6 +1,6 @@
 # 教室抢答模块（视觉 + 语音）
 
-教室场景本地网页：**视觉举手识别** + **CosyVoice 读题** + **独立计分板**。各页面解耦，**各自单独启动**（一个启动脚本只打开对应页面）。
+教室场景本地网页：**视觉举手识别** + **CosyVoice 读题** + **A–D 语音作答** + **独立计分板**。完整抢答流程由 `start-classroom.bat` 启动，在一个页面中运行；视觉和计分板调试页仍可单独打开。
 
 | 页面 | 地址 | 启动 | 需要 |
 |------|------|------|------|
@@ -8,9 +8,10 @@
 | **人物编号 · 视频回放检测** | http://localhost:5173/people-video.html | `start-people-video.bat` | **仅 Node.js** |
 | **人物编号 · 相机快版** | http://localhost:5173/people-fast.html | `start-people-fast.bat` | **仅 Node.js** + 相机 |
 | **计分板（仅展示）** | http://localhost:5173/scoreboard.html | `start-scoreboard.bat` | 同域其它页即可 |
-| **读题 · CosyVoice** | http://localhost:5173/speech-online.html | `start-speech-online.bat` | Node.js **+ Python** · 联网 |
+| **正式题目展示：视觉 + 读题 + 语音作答** | http://localhost:5173/classroom.html | `start-classroom.bat` | Node.js **+ Python** · 摄像头、麦克风、联网 |
+| **带实时画面的测试页** | http://localhost:5173/speech-online.html | 手动打开 | 同上 |
 
-视觉 / 读题各自独立；计分板通过浏览器跨标签页总线订阅事件，**本页不嵌相机、不嵌读题**。
+完整抢答页内置视觉检测；独立计分板通过浏览器跨标签页总线订阅事件。
 
 仓库：https://github.com/am1594754796-collab/video_test
 
@@ -85,13 +86,24 @@ REM 或双击对应 start-people-*.bat / start-people-video.bat
 
 ## 读题 · CosyVoice
 
+### 完整抢答工作流程
+
+1. 首次准备：安装 Node/Python 依赖与 MediaPipe 模型，并运行 `python -m speech_answer.prebuild_audio` 生成题目和倒计时 MP3。
+2. 双击 `start-classroom.bat`。脚本检查 MediaPipe 和预生成音频，等待 Python API（8765）与 Vite（5173）就绪，然后自动打开正式题目展示页 `classroom.html` 和独立计分板页。保持脚本窗口运行；结束时在窗口按 Enter 停止本次启动的服务。浏览器允许摄像头和麦克风。
+3. 正式页默认检测 6 人并从左到右编号；排序锁定之前「开始本题」不可点击。若人数需要调整，输入 1–6 后点「重新检测人数并排序」。重新编号会重置本页演示分数。
+4. 选择题目，点「开始本题」。系统读题，随后播放举手倒计时；倒计时内提前举手扣 1 分。
+5. 倒计时结束后，视觉识别锁定最先举手者。浏览器开始听取 A–D；每个 5 秒窗口以最后一次有效选项为准，未听到就继续听。
+6. 系统按标准答案判题并计分（对 +1，错 −1，最低 0），展示判题结果和分数 5 秒后自动朗读下一题，之后重复倒计时、抢答和听答流程。只有第一题需要点「开始本题」。末题展示 5 秒后结束；可手动选题重新开始。
+
+「停止本轮」可中止播放、倒计时或听答；独立计分板 `scoreboard.html` 会由脚本自动打开。计分板固定显示 1–6 号，打开时同步已有分数，判题后实时更新。
+
 | 项 | 说明 |
 |----|------|
 | 启动 | `start-speech-online.bat`（会起 Python API + Vite，只开读题页） |
 | 页面 | http://localhost:5173/speech-online.html |
 | 需要 | Node + Python；联网；Chrome / Edge |
 
-**操作：** 先预生成语音 → API 已连接 → 选题 →「扬声器读题」（播放题库 MP3，读完后举手倒计时）。本页**不做**听写与答案匹配。
+**操作：** 先预生成语音 → 运行 `start-classroom.bat` → 允许摄像头和麦克风 → 设参与人数并等待编号锁定 → 选题并点「开始本题」。系统播放题目 MP3、播举手倒计时，检测最先举手者，自动听 A–D 选项（每 5 秒一轮，取最后一次），按对错 ±1 分并自动进入下一题。末题结束后停下。
 
 **预生成语音**（改题后重跑）：
 
@@ -153,7 +165,8 @@ copy deploy\api.env.example python\data\api.env
 | `start-people-fast.bat` | 相机多人检测 |
 | `start-people-video.bat` | 视频回放检测 |
 | `start-scoreboard.bat` | 计分板 |
-| `start-speech-online.bat` | 语音在线（含 Python API） |
+| `start-classroom.bat` | 完整抢答：视觉 + 读题 + 语音作答（含 Python API） |
+| `start-speech-online.bat` | 同上，旧入口保留 |
 | `start-python-api.bat` | 仅 Python API（8765） |
 | `start-score-qr.bat` | 扫码打分（8000，独立） |
 
@@ -186,7 +199,8 @@ video_test/
   people-fast.html           ← 多人相机
   people-video.html          ← 视频回放
   scoreboard.html            ← 计分板
-  speech-online.html         ← 语音在线
+  classroom.html             ← 正式题目展示（隐藏实时画面）
+  speech-online.html         ← 带画面的测试页
   start-*.bat / start.ps1
   public/mediapipe/          ← WASM + Pose 模型
   src/vision/                ← MediaPipe / 编号 / 举手

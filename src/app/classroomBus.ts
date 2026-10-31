@@ -16,8 +16,20 @@ export type ClassroomEvent =
   /** Raised during COUNTDOWN (or before open grace). Scoreboard may deduct. */
   | { type: "early-raise"; personIndex: number; atMs?: number; source?: string }
   | { type: "race-reset"; source?: string }
+  /** @deprecated Prefer answer-result; kept as passed:true shorthand. */
   | { type: "answer-passed"; questionId?: string; transcript?: string; source?: string }
-  | { type: "scores-clear"; source?: string };
+  | {
+      type: "answer-result";
+      passed: boolean;
+      letter: string;
+      personIndex?: number;
+      questionId?: string;
+      transcript?: string;
+      source?: string;
+    }
+  | { type: "scores-clear"; source?: string }
+  | { type: "scores-snapshot-request"; source?: string }
+  | { type: "scores-snapshot"; scores: Record<string, number>; source?: string };
 
 const CHANNEL = "classroom-vision-speech-score";
 const STORAGE_KEY = "classroom-bus-ping";

@@ -4,14 +4,23 @@ import {
   renderQuestionPreview,
   type BankQuestion,
 } from "./questionUi";
-import { publishClassroomEvent } from "./classroomBus";
+import {
+  publishClassroomEvent,
+  subscribeClassroomEvents,
+  type ClassroomEvent,
+} from "./classroomBus";
 import { speakQuestion, speakRaiseHandCountdown, stopSpeaking } from "./speakQuestion";
 import { BackgroundRaiseSession } from "./backgroundRaiseDetect";
 import { RaiseRaceRound } from "../round";
+import {
+  expectedChoiceLetter,
+  listenForChoice,
+  type ChoiceLetter,
+} from "../speech";
 
 const BUS_SOURCE = "speech-online";
-/** Demo starting points so early-raise −1 is visible. */
-const DEMO_START_SCORE = 5;
+const INITIAL_SCORE = 0;
+const ANSWER_RESULT_DISPLAY_MS = 5000;
 
 type Question = BankQuestion;
 
@@ -30,12 +39,28 @@ const raceBanner = document.querySelector<HTMLElement>("#race-banner");
 const scoreDemo = document.querySelector<HTMLElement>("#score-demo");
 const detectStatusEl = document.querySelector<HTMLElement>("#detect-status");
 const bgVideo = document.querySelector<HTMLVideoElement>("#bg-video")!;
+const expectedCountInput = document.querySelector<HTMLInputElement>("#expected-count")!;
+const btnRestartVision = document.querySelector<HTMLButtonElement>("#btn-restart-vision")!;
 
 let questions: Question[] = [];
 const race = new RaiseRaceRound();
 const scores = new Map<number, number>();
 let bannerTimer = 0;
 let detect: BackgroundRaiseSession | null = null;
+/** Prevents overlapping listen / auto-advance. */
+let answerSessionActive = false;
+let listenAbort: AbortController | null = null;
+/** Skip change→speak when we set select.value during auto-next. */
+let suppressSelectSpeak = false;
+let speakingOrCountdown = false;
+let visionStarting = false;
+let roundVersion = 0;
+
+function updateStartAvailability(): void {
+  if (!btnSpeak) return;
+  const selected = questions.find((q) => q.id === questionSelect.value);
+  btnSpeak.disabled = !detect?.locked || !selected?.has_audio || !expectedChoiceLetter(selected);
+}
 
 function setStatus(text: string): void {
   statusEl.textContent = text;
@@ -91,10 +116,19 @@ function renderScores(highlight?: { index: number; kind: "penalty" | "winner" })
   }
 }
 
+function publishScores(): void {
+  publishClassroomEvent({
+    type: "scores-snapshot",
+    scores: Object.fromEntries(scores),
+    source: BUS_SOURCE,
+  });
+}
+
 function seedScores(seats: number[]): void {
   scores.clear();
-  for (const s of seats) scores.set(s, DEMO_START_SCORE);
+  for (const s of seats) scores.set(s, INITIAL_SCORE);
   renderScores();
+  publishScores();
 }
 
 function applyRaceOut(
@@ -102,7 +136,7 @@ function applyRaceOut(
 ): void {
   for (const e of events) {
     if (e.type === "early-raise") {
-      const prev = scores.get(e.personIndex) ?? DEMO_START_SCORE;
+      const prev = scores.get(e.personIndex) ?? INITIAL_SCORE;
       const next = Math.max(0, prev - 1);
       scores.set(e.personIndex, next);
       renderScores({ index: e.personIndex, kind: "penalty" });
@@ -114,24 +148,162 @@ function applyRaceOut(
         atMs: e.atMs,
         source: BUS_SOURCE,
       });
+      publishScores();
     } else if (e.type === "winner") {
       renderScores({ index: e.personIndex, kind: "winner" });
       showBanner("win", `#${e.personIndex} 抢答成功`, 0);
-      setStatus(`抢答成功 · #${e.personIndex} · 本轮已锁定`);
+      setStatus(`抢答成功 · #${e.personIndex} · 开始听答`);
       publishClassroomEvent({
         type: "first-raise",
         personIndex: e.personIndex,
         source: BUS_SOURCE,
       });
+      void beginAnswerListen(e.personIndex);
     }
   }
 }
 
+function abortListen(): void {
+  listenAbort?.abort();
+  listenAbort = null;
+}
+
 function abortRound(): void {
+  roundVersion++;
+  abortListen();
+  answerSessionActive = false;
   race.resetToIdle();
+  speakingOrCountdown = false;
   clearBanner();
   publishClassroomEvent({ type: "raise-round-abort", source: BUS_SOURCE });
+  publishClassroomEvent({ type: "race-reset", source: BUS_SOURCE });
 }
+
+function applyAnswerScore(
+  personIndex: number,
+  passed: boolean,
+): number {
+  const prev = scores.get(personIndex) ?? INITIAL_SCORE;
+  const next = Math.max(0, prev + (passed ? 1 : -1));
+  scores.set(personIndex, next);
+  renderScores({ index: personIndex, kind: passed ? "winner" : "penalty" });
+  return next;
+}
+
+async function beginAnswerListen(personIndex: number): Promise<void> {
+  if (answerSessionActive) return;
+  if (race.phase !== "locked") return;
+  const q = findQuestion(questions, questionSelect.value);
+  if (!q) {
+    setStatus("抢答成功，但没有当前题目，无法听答");
+    return;
+  }
+  const expected = expectedChoiceLetter(q);
+  if (!expected) {
+    setStatus(`${q.id} 无法映射标准答案到 A–D，请检查题库 options/answer`);
+    return;
+  }
+
+  answerSessionActive = true;
+  const activeVersion = roundVersion;
+  abortListen();
+  listenAbort = new AbortController();
+  showBanner("win", `#${personIndex} 请说 A / B / C / D`, 0);
+  setStatus(`#${personIndex} 听答中 · 期望选项已锁定 · 每 5 秒一轮，取最后一次`);
+
+  const result = await listenForChoice({
+    signal: listenAbort.signal,
+    onWaiting: () => {
+      setStatus(`#${personIndex} 未听清选项 · 继续听（再说一次 A–D）`);
+    },
+    onTranscript: (text, letter) => {
+      const hint = letter ? `当前识别：${letter}` : "等待 A–D…";
+      setStatus(`#${personIndex} 听答中 · ${hint}${text ? ` ·「${text.slice(-24)}」` : ""}`);
+    },
+  });
+
+  listenAbort = null;
+
+  if (!result.ok) {
+    answerSessionActive = false;
+    if (result.reason === "aborted") return;
+    setStatus(result.message ?? `听答失败：${result.reason}`);
+    showBanner("early", result.message ?? "听答失败", 3200);
+    return;
+  }
+
+  const letter = result.letter as ChoiceLetter;
+  const passed = letter === expected;
+  const nextScore = applyAnswerScore(personIndex, passed);
+  publishClassroomEvent({
+    type: "answer-result",
+    passed,
+    letter,
+    personIndex,
+    questionId: q.id,
+    transcript: result.transcript,
+    source: BUS_SOURCE,
+  });
+  publishScores();
+
+  const verdict = passed ? "答对 +1" : `答错 −1（说了 ${letter}，应为 ${expected}）`;
+  showBanner(passed ? "win" : "early", `#${personIndex} ${verdict} → ${nextScore}`, ANSWER_RESULT_DISPLAY_MS);
+  setStatus(`#${personIndex} ${verdict} → ${nextScore} · 展示 5 秒后自动进入下一题`);
+
+  await sleep(ANSWER_RESULT_DISPLAY_MS);
+  if (activeVersion !== roundVersion) return;
+  answerSessionActive = false;
+  await advanceToNextQuestion();
+}
+
+async function advanceToNextQuestion(): Promise<void> {
+  publishClassroomEvent({ type: "race-reset", source: BUS_SOURCE });
+  const curId = questionSelect.value;
+  const idx = questions.findIndex((q) => q.id === curId);
+  const next = idx >= 0 ? questions[idx + 1] : undefined;
+  if (!next) {
+    race.resetToIdle();
+    setStatus(`题库已结束（最后一题 ${curId}）· 可手动选题重来`);
+    showBanner("open", "题库结束", 4000);
+    return;
+  }
+  suppressSelectSpeak = true;
+  questionSelect.value = next.id;
+  syncPreviewFromSelect();
+  suppressSelectSpeak = false;
+  race.resetToIdle();
+  clearBanner();
+  setStatus(`自动进入 ${next.id} · 开始读题`);
+  await onSpeakQuestion();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => window.setTimeout(r, ms));
+}
+
+function onBusEvent(event: ClassroomEvent): void {
+  if (event.type === "scores-snapshot-request") {
+    publishScores();
+    return;
+  }
+  if (event.type === "scores-clear" && event.source !== BUS_SOURCE) {
+    for (const index of scores.keys()) scores.set(index, 0);
+    renderScores();
+    publishScores();
+    return;
+  }
+  if (event.type === "first-raise" && event.source !== BUS_SOURCE) {
+    void beginAnswerListen(event.personIndex);
+    return;
+  }
+  if (event.type === "race-reset" || event.type === "raise-round-abort") {
+    if (event.source === BUS_SOURCE) return;
+    abortListen();
+    answerSessionActive = false;
+  }
+}
+
+subscribeClassroomEvents(onBusEvent);
 
 async function afterQuestionSpeak(q: Question, rate: number): Promise<void> {
   setStatus(`读题结束 · ${q.id} · 举手倒计时…`);
@@ -150,6 +322,7 @@ async function afterQuestionSpeak(q: Question, rate: number): Promise<void> {
       setStatus(`举手倒计时 ${n} · 提前举手将扣分`);
     },
     onEnd: () => {
+      speakingOrCountdown = false;
       const openAt = performance.now();
       race.openWindow(openAt);
       publishClassroomEvent({ type: "raise-window-open", source: BUS_SOURCE });
@@ -159,6 +332,7 @@ async function afterQuestionSpeak(q: Question, rate: number): Promise<void> {
       window.setTimeout(() => hideRaiseCountdown(), 1200);
     },
     onError: (msg) => {
+      speakingOrCountdown = false;
       abortRound();
       hideRaiseCountdown();
       setStatus(msg);
@@ -218,7 +392,7 @@ function applyQuestions(list: Question[], opts?: { announce?: boolean; pathHint?
   questions = list;
   fillQuestionSelect(questionSelect, questions);
   const n = questions.length;
-  if (btnSpeak) btnSpeak.disabled = n === 0;
+  updateStartAvailability();
   syncPreviewFromSelect();
   if (opts?.announce === false) return;
   const path = opts?.pathHint ?? answersPathInput.value;
@@ -236,6 +410,14 @@ function syncPreviewFromSelect(): void {
 }
 
 async function onSpeakQuestion(): Promise<void> {
+  if (speakingOrCountdown || answerSessionActive || race.phase !== "idle") {
+    setStatus("本轮正在进行；如需重来，请先点「停止本轮」");
+    return;
+  }
+  if (!detect?.locked) {
+    setStatus("请先等待视觉识别锁定参与者编号，再开始本题");
+    return;
+  }
   const q = findQuestion(questions, questionSelect.value);
   if (!q) {
     setStatus("请先选择题目");
@@ -247,10 +429,15 @@ async function onSpeakQuestion(): Promise<void> {
     setStatus(`缺少 ${q.id}.mp3：在 python/ 运行 .venv\\Scripts\\python.exe -m speech_answer.prebuild_audio`);
     return;
   }
+  if (!expectedChoiceLetter(q)) {
+    setStatus(`${q.id} 无法映射标准答案到 A–D，请检查题库`);
+    return;
+  }
   // Reset race outcome for a new question; keep seat scores for the demo session.
   race.resetToIdle();
   renderScores();
   const rate = currentSpeakRate();
+  speakingOrCountdown = true;
   setStatus(`正在播放预生成语音 ${q.id}（播放倍速 ${rate.toFixed(2)}）…`);
   await speakQuestion(q, {
     rate,
@@ -258,6 +445,8 @@ async function onSpeakQuestion(): Promise<void> {
       void afterQuestionSpeak(q, rate);
     },
     onError: (msg) => {
+      speakingOrCountdown = false;
+      abortRound();
       hideRaiseCountdown();
       setStatus(msg);
     },
@@ -310,13 +499,20 @@ btnLoadBank.addEventListener("click", () => {
 });
 
 questionSelect.addEventListener("change", () => {
+  if (suppressSelectSpeak) {
+    syncPreviewFromSelect();
+    updateStartAvailability();
+    return;
+  }
   stopSpeaking();
   abortRound();
+  speakingOrCountdown = false;
   hideRaiseCountdown();
   syncPreviewFromSelect();
+  updateStartAvailability();
   const q = findQuestion(questions, questionSelect.value);
   if (!q) return;
-  void onSpeakQuestion();
+  setStatus(`已选择 ${q.id} · 视觉编号锁定后点「开始本题」`);
 });
 
 btnSpeak?.addEventListener("click", () => {
@@ -325,23 +521,34 @@ btnSpeak?.addEventListener("click", () => {
 btnSpeakStop?.addEventListener("click", () => {
   stopSpeaking();
   abortRound();
+  speakingOrCountdown = false;
   hideRaiseCountdown();
   setStatus("已停止朗读");
 });
 
 async function startBackgroundDetect(): Promise<void> {
+  if (visionStarting) return;
+  visionStarting = true;
+  btnRestartVision.disabled = true;
+  detect?.stop();
+  updateStartAvailability();
+  const expectedCount = Math.min(6, Math.max(1, Math.trunc(Number(expectedCountInput.value) || 1)));
+  expectedCountInput.value = String(expectedCount);
   detect = new BackgroundRaiseSession(
-    { video: bgVideo, expectedCount: 1 },
+    { video: bgVideo, expectedCount },
     {
       onStatus: setDetectStatus,
       onLocked: (seats) => {
         seedScores(seats);
+        updateStartAvailability();
         publishClassroomEvent({ type: "numbering-locked", seats, source: BUS_SOURCE });
-        setDetectStatus(`后台已锁定 ${seats.map((n) => `#${n}`).join(" ")} · 右下角为弱化预览`);
+        setDetectStatus(`人数排序成功：${seats.map((n) => `#${n}`).join(" ")} · 可以开始本题`);
       },
       onCleared: () => {
         scores.clear();
         renderScores();
+        updateStartAvailability();
+        publishScores();
         publishClassroomEvent({ type: "numbering-cleared", source: BUS_SOURCE });
       },
       onFrame: (people, nowMs) => {
@@ -356,8 +563,8 @@ async function startBackgroundDetect(): Promise<void> {
                 : "等待读题倒计时";
         setDetectStatus(
           raised.length > 0
-            ? `检测：举手 ${raised.join("、")} · ${phaseHint}`
-            : `检测：未举手 · ${phaseHint}${detect?.locked ? "" : " · 尚未锁定座位"}`,
+            ? `编号已锁定 · 举手 ${raised.join("、")} · ${phaseHint}`
+            : `编号已锁定 · 未举手 · ${phaseHint}`,
         );
         // Always feed while armed so held-up hands into countdown still count.
         if (race.phase === "idle") return;
@@ -369,6 +576,7 @@ async function startBackgroundDetect(): Promise<void> {
     bgVideo.classList.add("live");
     await detect.start();
   } catch (err) {
+    updateStartAvailability();
     const msg = err instanceof Error ? err.message : String(err);
     const denied =
       /NotAllowedError|Permission denied|PermissionDenied/i.test(msg) ||
@@ -378,8 +586,19 @@ async function startBackgroundDetect(): Promise<void> {
         ? "后台检测：请允许摄像头后刷新页面"
         : `后台检测启动失败：${msg}`,
     );
+  } finally {
+    visionStarting = false;
+    btnRestartVision.disabled = false;
   }
 }
+
+btnRestartVision.addEventListener("click", () => {
+  stopSpeaking();
+  abortRound();
+  speakingOrCountdown = false;
+  hideRaiseCountdown();
+  void startBackgroundDetect();
+});
 
 async function boot(): Promise<void> {
   const ok = await refreshHealth();

@@ -3,15 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>读题 · CosyVoice</title>
+    <title>教室抢答 · 视觉、读题与语音作答</title>
     <link rel="stylesheet" href="/src/app/speech-board.css" />
   </head>
   <body>
     <main class="app">
       <header>
-        <h1>读题 · 抢答</h1>
+        <h1>教室抢答</h1>
         <p class="sub">
-          前台看题读题；举手检测在后台默认运行。倒计时内举手扣分，发令后举手为抢答成功。
+          读题 → 抢答 → 麦克风听 A/B/C/D（5 秒一轮，取最后一次）→ 对 +1 / 错 −1 → 自动下一题。
           · <a href="/people-fast.html">视觉调试</a>
           · <a href="/scoreboard.html">计分板</a>
         </p>
@@ -34,6 +34,14 @@
 
       <section class="controls">
         <label class="field">
+          参与人数（1–6）
+          <input id="expected-count" type="number" min="1" max="6" value="1" />
+        </label>
+        <button type="button" id="btn-restart-vision" class="secondary">启动 / 重新编号</button>
+      </section>
+
+      <section class="controls">
+        <label class="field">
           当前题目
           <select id="question-select"></select>
         </label>
@@ -42,8 +50,8 @@
           <input id="speak-rate" type="range" min="0.5" max="2" step="0.05" value="1" />
           <span id="speak-rate-value">1.00</span>
         </label>
-        <button type="button" id="btn-speak" class="secondary">扬声器读题</button>
-        <button type="button" id="btn-speak-stop" class="secondary">停止朗读</button>
+        <button type="button" id="btn-speak" class="secondary">开始本题</button>
+        <button type="button" id="btn-speak-stop" class="secondary">停止本轮</button>
       </section>
 
       <section id="question-preview" class="question-preview" aria-live="polite">
@@ -61,7 +69,7 @@
 
       <video id="bg-video" class="bg-video" playsinline muted></video>
 
-      <p id="status" class="status" role="status">请选择题目后点「扬声器读题」</p>
+      <p id="status" class="status" role="status">等待题库与视觉识别就绪</p>
     </main>
     <script type="module" src="/src/app/speech-board-online.ts"></script>
   </body>

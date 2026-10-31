@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>教室抢答 · 题目展示</title>
+    <link rel="stylesheet" href="/src/app/speech-board.css" />
+    <link rel="stylesheet" href="/src/app/classroom.css" />
+  </head>
+  <body>
+    <main class="app classroom-app">
+      <header>
+        <h1>教室抢答</h1>
+        <p class="sub">第一题手动开始；判题计分展示 5 秒后，自动进入下一题。</p>
+      </header>
+
+      <section class="controls classroom-controls">
+        <label class="field">
+          参与人数
+          <input id="expected-count" type="number" min="1" max="6" value="6" />
+        </label>
+        <button type="button" id="btn-restart-vision" class="secondary">重新检测人数并排序</button>
+        <span id="api-status" class="api-status">检查服务中…</span>
+      </section>
+
+      <p id="detect-status" class="detect-status" role="status">正在检测 6 人并排序…</p>
+
+      <section class="controls classroom-controls">
+        <label class="field">
+          当前题目
+          <select id="question-select"></select>
+        </label>
+        <button type="button" id="btn-speak" disabled>开始本题</button>
+        <button type="button" id="btn-speak-stop" class="secondary">停止本轮</button>
+      </section>
+
+      <section id="question-preview" class="question-preview" aria-live="polite">
+        <p class="qp-prompt">题库加载后显示题目。</p>
+        <ol class="qp-options" hidden></ol>
+      </section>
+
+      <div id="raise-countdown" class="raise-countdown" aria-live="assertive" hidden>3</div>
+      <section class="race-panel" aria-live="polite">
+        <div id="race-banner" class="race-banner" hidden></div>
+      </section>
+      <p id="status" class="status" role="status">等待题库与人数排序就绪</p>
+
+      <div class="runtime-only" aria-hidden="true">
+        <input id="answers-path" type="text" value="data/answers.json" />
+        <button type="button" id="btn-load-bank">加载题库</button>
+        <input id="speak-rate" type="range" value="1" />
+        <span id="speak-rate-value"></span>
+        <ul id="score-demo"></ul>
+      </div>
+      <video id="bg-video" class="bg-video" playsinline muted aria-hidden="true"></video>
+    </main>
+    <script type="module" src="/src/app/speech-board-online.ts"></script>
+  </body>
+</html>

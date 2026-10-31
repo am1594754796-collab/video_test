@@ -14,10 +14,10 @@ const statusEl = document.querySelector<HTMLElement>("#status")!;
 const busStatusEl = document.querySelector<HTMLElement>("#bus-status")!;
 const btnClear = document.querySelector<HTMLButtonElement>("#btn-clear-scores")!;
 
+const SEATS = [1, 2, 3, 4, 5, 6] as const;
 /** Seat index → points. */
 const scores = new Map<number, number>();
-let seats: number[] = [];
-/** While set, that number flashes until answer-passed. */
+/** Winner flashes through answer judging and the five-second score display. */
 let flashingIndex: number | null = null;
 
 function setStatus(text: string): void {
@@ -32,14 +32,12 @@ function setBusStatus(text: string, ok = true): void {
 
 function renderScoreBoard(): void {
   boardEl.innerHTML = "";
-  if (seats.length === 0) {
-    return;
-  }
-  for (const index of seats) {
+  for (const index of SEATS) {
     const card = document.createElement("article");
     card.className = "seat" + (flashingIndex === index ? " flashing" : "");
     card.innerHTML = `
       <div class="num">#${index}</div>
+      ${flashingIndex === index ? '<div class="winner-label">抢答成功</div>' : ''}
       <div class="score">积分 <strong>${scores.get(index) ?? 0}</strong></div>
     `;
     boardEl.appendChild(card);
@@ -47,20 +45,14 @@ function renderScoreBoard(): void {
 }
 
 function onNumberingLocked(nextSeats: number[]): void {
-  seats = [...nextSeats].sort((a, b) => a - b);
-  for (const i of seats) {
-    if (!scores.has(i)) scores.set(i, 0);
-  }
   flashingIndex = null;
   renderScoreBoard();
-  setBusStatus(`已同步编号：${seats.map((n) => `#${n}`).join(" ")}`);
+  setBusStatus(`已锁定参与者：${nextSeats.map((n) => `#${n}`).join(" ")}`);
   setStatus("编号已锁定 · 等待视觉页「最先举手」");
 }
 
 function ensureSeat(personIndex: number): void {
-  if (!seats.includes(personIndex)) {
-    seats = [...seats, personIndex].sort((a, b) => a - b);
-  }
+  if (!SEATS.includes(personIndex as (typeof SEATS)[number])) return;
   if (!scores.has(personIndex)) scores.set(personIndex, 0);
 }
 
@@ -81,18 +73,34 @@ function onEarlyRaise(personIndex: number): void {
   setBusStatus(`提前举手：#${personIndex} -1`);
 }
 
-function onAnswerPassed(transcript?: string): void {
-  if (flashingIndex == null) {
-    setStatus("收到答对信号，但当前没有闪烁中的编号（请先在视觉页举手）");
+function onAnswerResult(opts: {
+  passed: boolean;
+  letter?: string;
+  personIndex?: number;
+  transcript?: string;
+}): void {
+  const idx = opts.personIndex ?? flashingIndex;
+  if (idx == null) {
+    setStatus("收到判题信号，但没有抢答座位（请先举手）");
     return;
   }
-  const idx = flashingIndex;
-  scores.set(idx, (scores.get(idx) ?? 0) + 1);
-  flashingIndex = null;
+  ensureSeat(idx);
+  const delta = opts.passed ? 1 : -1;
+  const next = Math.max(0, (scores.get(idx) ?? 0) + delta);
+  scores.set(idx, next);
   renderScoreBoard();
-  const tip = transcript ? ` ·「${transcript}」` : "";
-  setStatus(`#${idx} 答对 · 积分 ${scores.get(idx)} · 已停闪${tip} · 可再举手`);
-  setBusStatus(`上一题：#${idx} +1`);
+  const tip = opts.transcript
+    ? ` ·「${opts.transcript}」`
+    : opts.letter
+      ? ` · 选 ${opts.letter}`
+      : "";
+  const verdict = opts.passed ? "答对 +1" : "答错 −1";
+  setStatus(`#${idx} ${verdict} → ${next} · 展示 5 秒后进入下一题${tip}`);
+  setBusStatus(`上一题：#${idx} ${opts.passed ? "+1" : "-1"}`);
+}
+
+function onAnswerPassed(transcript?: string): void {
+  onAnswerResult({ passed: true, transcript });
 }
 
 function onRaceReset(): void {
@@ -104,11 +112,19 @@ function onRaceReset(): void {
 }
 
 function onNumberingCleared(): void {
-  seats = [];
   flashingIndex = null;
   renderScoreBoard();
   setBusStatus("编号已清除 · 等待视觉页重新锁定", false);
-  setStatus("视觉页解除编号 · 计分板清空座位（积分仍保留在内存，重锁同号会沿用）");
+  setStatus("视觉页解除编号 · 等待重新锁定");
+}
+
+function onScoresSnapshot(next: Record<string, number>): void {
+  for (const index of SEATS) {
+    const value = next[String(index)];
+    scores.set(index, typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0);
+  }
+  renderScoreBoard();
+  setBusStatus("已同步抢答页分数");
 }
 
 function handleEvent(event: ClassroomEvent): void {
@@ -131,11 +147,22 @@ function handleEvent(event: ClassroomEvent): void {
     case "answer-passed":
       onAnswerPassed(event.transcript);
       break;
+    case "answer-result":
+      onAnswerResult({
+        passed: event.passed,
+        letter: event.letter,
+        personIndex: event.personIndex,
+        transcript: event.transcript,
+      });
+      break;
     case "scores-clear":
       for (const i of scores.keys()) scores.set(i, 0);
       flashingIndex = null;
       renderScoreBoard();
       setStatus("积分已清空");
+      break;
+    case "scores-snapshot":
+      onScoresSnapshot(event.scores);
       break;
     default:
       break;
@@ -151,6 +178,7 @@ btnClear.addEventListener("click", () => {
 });
 
 subscribeClassroomEvents(handleEvent);
-setBusStatus("总线已就绪 · 请打开视觉快版与语音页", true);
-setStatus("本页只展示计分。请另开标签页运行视觉识别与语音识别。");
+setBusStatus("等待抢答页同步分数", true);
+setStatus("请在另一个标签页打开教室抢答页，开始答题后分数会实时变化");
 renderScoreBoard();
+publishClassroomEvent({ type: "scores-snapshot-request", source: "scoreboard" });

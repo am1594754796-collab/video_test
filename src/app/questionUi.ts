@@ -16,7 +16,7 @@ export function fillQuestionSelect(
   for (const q of questions) {
     const opt = document.createElement("option");
     opt.value = q.id;
-    const hint = q.prompt?.trim() ? truncate(q.prompt.trim(), 28) : `答案：${q.answer}`;
+    const hint = q.prompt?.trim() ? truncate(q.prompt.trim(), 28) : "暂无题干";
     opt.textContent = `${q.id} · ${hint}`;
     select.appendChild(opt);
   }
@@ -45,7 +45,7 @@ export function renderQuestionPreview(
     return;
   }
 
-  promptEl.textContent = q.prompt?.trim() || `（${q.id} 无题干，仅有标准答案供匹配）`;
+  promptEl.textContent = q.prompt?.trim() || `（${q.id} 暂无题干）`;
   listEl.innerHTML = "";
   let hasOpt = false;
   if (q.options) {

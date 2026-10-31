@@ -74,7 +74,8 @@ async function playCachedUrl(
     timers: [],
   };
   current = playback;
-  void playback.audio.play().catch(() => undefined);
+  const warm = playback.audio;
+  if (warm) void warm.play().catch(() => undefined);
 
   const rate = opts.rate ?? 1;
   try {

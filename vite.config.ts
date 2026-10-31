@@ -11,6 +11,7 @@ export default defineConfig({
         peopleFast: resolve(__dirname, "people-fast.html"),
         peopleVideo: resolve(__dirname, "people-video.html"),
         speechOnline: resolve(__dirname, "speech-online.html"),
+        classroom: resolve(__dirname, "classroom.html"),
         scoreboard: resolve(__dirname, "scoreboard.html"),
       },
     },

@@ -1,0 +1,50 @@
+.classroom-app {
+  max-width: 1100px;
+  padding: 2rem;
+}
+
+.classroom-app header h1 {
+  font-size: clamp(2rem, 4vw, 3.5rem);
+}
+
+.classroom-controls {
+  align-items: center;
+}
+
+.classroom-controls button {
+  font-size: 1.1rem;
+}
+
+.classroom-app .question-preview {
+  min-height: 280px;
+  padding: 2rem;
+}
+
+.classroom-app .qp-prompt {
+  font-size: clamp(1.5rem, 3vw, 2.5rem);
+}
+
+.classroom-app .qp-options {
+  font-size: clamp(1.1rem, 2vw, 1.6rem);
+}
+
+.classroom-app .detect-status {
+  font-size: 1.1rem;
+  color: var(--ok);
+}
+
+.classroom-app .runtime-only {
+  display: none;
+}
+
+/* MediaPipe needs a live video element, but the classroom page does not show it. */
+.classroom-app .bg-video,
+.classroom-app .bg-video.live {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  right: 0;
+  bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+}

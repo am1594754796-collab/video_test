@@ -138,11 +138,24 @@ button.secondary {
 .seat.flashing {
   border-color: var(--flash);
   box-shadow: 0 0 0 2px rgba(240, 180, 41, 0.4);
+  animation: winner-card-flash 0.75s ease-in-out infinite;
 }
 
 .seat.flashing .num {
   color: var(--flash);
   animation: seat-flash 0.75s ease-in-out infinite;
+}
+
+.winner-label {
+  color: var(--flash);
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+@keyframes winner-card-flash {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(240, 180, 41, 0.25); }
+  50% { box-shadow: 0 0 0 7px rgba(240, 180, 41, 0.75); }
 }
 
 @keyframes seat-flash {

@@ -11,23 +11,21 @@
       <header class="top">
         <div>
           <p class="brand">教室计分板</p>
-          <h1>仅展示积分</h1>
+          <h1>实时判题积分</h1>
         </div>
         <p class="sub">
-          本页只显示编号与积分。请在独立标签页打开
-          <a href="/people-fast.html" target="_blank" rel="noopener">视觉快版</a>
-          与
-          <a href="/speech-online.html" target="_blank" rel="noopener">语音识别</a>
-          ；最先举手会闪烁，语音答对后 +1 并停闪。
+          同时显示 1–6 号与对应分数。请在另一标签页打开
+          <a href="/speech-online.html" target="_blank" rel="noopener">教室抢答页</a>；
+          答对 +1，答错或提前举手 −1，最低为 0。
         </p>
       </header>
 
       <section class="controls">
         <button type="button" id="btn-clear-scores" class="secondary">清空积分</button>
-        <span id="bus-status" class="api-status">等待视觉页锁定编号…</span>
+        <span id="bus-status" class="api-status">等待抢答页同步…</span>
       </section>
 
-      <p id="status" class="status" role="status">打开视觉页完成人数锁定后，此处会显示大字编号</p>
+      <p id="status" class="status" role="status">正在显示 1–6 号积分</p>
 
       <section id="score-board" class="score-board" aria-live="polite"></section>
     </main>
