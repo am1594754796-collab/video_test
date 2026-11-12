@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>倒计时</title>
+  <style>
+    :root { font-family: system-ui, "Microsoft YaHei", sans-serif; color: #eef5ff; background: #101820; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; }
+    main { width: min(100%, 860px); text-align: center; }
+    h1 { margin: 0 0 26px; font-size: clamp(2rem, 5vw, 3.5rem); }
+    .panel { padding: clamp(24px, 5vw, 50px); border: 2px solid #344a59; border-radius: 24px; background: #1b2934; box-shadow: 0 16px 50px #0005; }
+    .settings, .buttons { display: flex; justify-content: center; align-items: end; gap: 14px; flex-wrap: wrap; }
+    label { display: grid; gap: 8px; text-align: left; color: #c5d5e3; font-weight: 600; }
+    input { width: 130px; padding: 12px; border: 2px solid #648094; border-radius: 12px; background: #101820; color: #fff; font: inherit; font-size: 1.5rem; text-align: center; }
+    input:focus-visible, button:focus-visible { outline: 3px solid #75e5ca; outline-offset: 3px; }
+    #display { margin: 26px 0; font-variant-numeric: tabular-nums; font-size: clamp(5rem, 18vw, 11rem); line-height: 1; font-weight: 800; letter-spacing: .02em; }
+    #display.warning { color: #ffcb70; }
+    #display.finished { color: #ff7777; }
+    button { min-width: 130px; min-height: 56px; padding: 12px 20px; border: 0; border-radius: 12px; background: #65dcbd; color: #10221e; font: inherit; font-size: 1.2rem; font-weight: 750; cursor: pointer; }
+    button.secondary { background: #d9e4ed; color: #172b38; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    #message { min-height: 1.5em; margin: 22px 0 0; color: #c5d5e3; font-size: 1.2rem; }
+    #url-hint { margin: 14px 0 0; color: #8aa0b3; font-size: 0.95rem; word-break: break-all; }
+    @media (max-width: 500px) { input { width: 112px; } button { min-width: 105px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>倒计时</h1>
+    <div class="panel">
+      <div class="settings">
+        <label for="minutes">分钟<input id="minutes" type="number" inputmode="numeric" min="0" max="999" value="1"></label>
+        <label for="seconds">秒数<input id="seconds" type="number" inputmode="numeric" min="0" max="59" value="0"></label>
+      </div>
+      <div id="display" role="timer" aria-live="off">01:00</div>
+      <div class="buttons">
+        <button id="start">开始</button>
+        <button id="pause" class="secondary" disabled>暂停</button>
+        <button id="reset" class="secondary">重置</button>
+      </div>
+      <p id="message" role="status">设置时长后点击开始</p>
+      <p id="url-hint"></p>
+    </div>
+  </main>
+  <script>
+    const minutesInput = document.getElementById('minutes');
+    const secondsInput = document.getElementById('seconds');
+    const display = document.getElementById('display');
+    const message = document.getElementById('message');
+    const urlHint = document.getElementById('url-hint');
+    const startButton = document.getElementById('start');
+    const pauseButton = document.getElementById('pause');
+    const resetButton = document.getElementById('reset');
+    let remainingMs = 60000;
+    let endAt = 0;
+    let timer = null;
+    let lastAnnounced = null;
+    let audioContext = null;
+    let alarmTimer = null;
+
+    urlHint.textContent = location.hostname.includes('jsdelivr') || location.hostname.includes('githack') || location.hostname.includes('github.io')
+      ? '永久公开页：任意电脑打开即可，无需你的电脑开机'
+      : (location.protocol === 'file:'
+        ? '本机调试可用 start-countdown.bat；要永久外网链接请用仓库公开页'
+        : `当前页：${location.href.split('#')[0]}（独立倒计时）`);
+
+    function configuredMs() {
+      const minutes = Number(minutesInput.value);
+      const seconds = Number(secondsInput.value);
+      if (!Number.isInteger(minutes) || minutes < 0 || minutes > 999 ||
+          !Number.isInteger(seconds) || seconds < 0 || seconds > 59 ||
+          minutes + seconds === 0) return null;
+      return (minutes * 60 + seconds) * 1000;
+    }
+
+    function show(ms) {
+      const totalSeconds = Math.ceil(ms / 1000);
+      display.textContent = `${String(Math.floor(totalSeconds / 60)).padStart(2, '0')}:${String(totalSeconds % 60).padStart(2, '0')}`;
+      display.classList.toggle('warning', totalSeconds > 0 && totalSeconds <= 10);
+      display.classList.toggle('finished', totalSeconds === 0);
+      document.title = `${display.textContent} · 倒计时`;
+      return totalSeconds;
+    }
+
+    function bell(at, duration = 0.14, frequency = 880) {
+      if (!audioContext) return;
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(frequency, at);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.18, at + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + duration);
+      oscillator.connect(gain).connect(audioContext.destination);
+      oscillator.start(at);
+      oscillator.stop(at + duration + 0.02);
+    }
+
+    /** One alarm-clock ding-ding pair. */
+    function alarmChirp() {
+      if (!audioContext || audioContext.state !== 'running') return;
+      const now = audioContext.currentTime;
+      bell(now, 0.11, 1480);
+      bell(now + 0.13, 0.13, 1180);
+    }
+
+    function finishFanfare() {
+      if (!audioContext || audioContext.state !== 'running') return;
+      const now = audioContext.currentTime;
+      bell(now, 0.28, 740);
+      bell(now + 0.34, 0.28, 740);
+      bell(now + 0.72, 0.55, 660);
+    }
+
+    function startAlarm() {
+      if (alarmTimer != null) return;
+      alarmChirp();
+      // ~2 chirps/sec for a continuous 10s alarm feel
+      alarmTimer = window.setInterval(alarmChirp, 480);
+    }
+
+    function stopAlarm() {
+      if (alarmTimer == null) return;
+      window.clearInterval(alarmTimer);
+      alarmTimer = null;
+    }
+
+    function tick() {
+      remainingMs = Math.max(0, endAt - Date.now());
+      const seconds = show(remainingMs);
+      if (seconds > 0 && seconds <= 10) startAlarm();
+      else stopAlarm();
+      if (seconds !== lastAnnounced) {
+        lastAnnounced = seconds;
+      }
+      if (seconds === 0) {
+        stopAlarm();
+        finishFanfare();
+        clearInterval(timer);
+        timer = null;
+        startButton.disabled = false;
+        pauseButton.disabled = true;
+        minutesInput.disabled = false;
+        secondsInput.disabled = false;
+        message.textContent = '时间到！';
+      }
+    }
+
+    function stop() {
+      clearInterval(timer);
+      timer = null;
+      stopAlarm();
+      pauseButton.disabled = true;
+      minutesInput.disabled = false;
+      secondsInput.disabled = false;
+    }
+
+    startButton.addEventListener('click', async () => {
+      const duration = configuredMs();
+      if (duration === null) { message.textContent = '请输入有效时长：0–999 分钟、0–59 秒，且不能为 0。'; return; }
+      if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      await audioContext.resume();
+      remainingMs = duration;
+      lastAnnounced = null;
+      stopAlarm();
+      endAt = Date.now() + remainingMs;
+      minutesInput.disabled = true;
+      secondsInput.disabled = true;
+      startButton.disabled = true;
+      pauseButton.disabled = false;
+      pauseButton.textContent = '暂停';
+      message.textContent = '倒计时进行中';
+      tick();
+      timer = setInterval(tick, 100);
+    });
+
+    pauseButton.addEventListener('click', () => {
+      if (timer) {
+        remainingMs = Math.max(0, endAt - Date.now());
+        clearInterval(timer);
+        timer = null;
+        stopAlarm();
+        pauseButton.textContent = '继续';
+        message.textContent = '已暂停';
+      } else {
+        endAt = Date.now() + remainingMs;
+        pauseButton.textContent = '暂停';
+        message.textContent = '倒计时进行中';
+        tick();
+        timer = setInterval(tick, 100);
+      }
+    });
+
+    resetButton.addEventListener('click', () => {
+      stop();
+      const duration = configuredMs();
+      remainingMs = duration ?? 0;
+      lastAnnounced = null;
+      show(remainingMs);
+      startButton.disabled = false;
+      pauseButton.textContent = '暂停';
+      message.textContent = '已重置';
+    });
+
+    for (const input of [minutesInput, secondsInput]) {
+      input.addEventListener('input', () => {
+        if (!timer && pauseButton.disabled) show(configuredMs() ?? 0);
+      });
+    }
+  </script>
+</body>
+</html>
