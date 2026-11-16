@@ -19,11 +19,22 @@ export type SpeakOptions = {
   onError?: (message: string) => void;
 };
 
+export type RaiseCountdownDigit = 5 | 4 | 3 | 2 | 1;
+
 export type RaiseCountdownOptions = SpeakOptions & {
-  onTick?: (n: 3 | 2 | 1) => void;
+  onTick?: (n: RaiseCountdownDigit) => void;
 };
 
 export const RAISE_COUNTDOWN_AUDIO_ID = "raise-countdown";
+
+const CIRCLED_NUMBERS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+const CHINESE_NUMBERS = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十"];
+
+function spokenChoiceText(text: string): string {
+  return text.replace(/[①-⑳]+/g, (match) =>
+    [...match].map((char) => `第${CHINESE_NUMBERS[CIRCLED_NUMBERS.indexOf(char)]}项`).join("、"),
+  );
+}
 
 type Playback = {
   abort: AbortController;
@@ -54,11 +65,66 @@ function release(playback: Playback): void {
 }
 
 export function stopSpeaking(): void {
+  if (typeof window !== "undefined") window.speechSynthesis?.cancel();
   const playback = current;
   current = null;
   if (!playback) return;
   playback.abort.abort();
   release(playback);
+}
+
+/** Speak the short answer verdict using the browser's Chinese voice. */
+export function speakAnswerFeedback(passed: boolean, correctLetter: "A" | "B" | "C" | "D", correctText?: string): Promise<void> {
+  if (typeof window === "undefined" || !window.speechSynthesis) return Promise.resolve();
+  const synth = window.speechSynthesis;
+  synth.cancel();
+  const answer = correctText?.trim() ? `${correctLetter}，${spokenChoiceText(correctText.trim())}` : correctLetter;
+  const text = passed ? "回答正确" : `回答错误，正确答案是 ${answer}`;
+  return new Promise((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "zh-CN";
+    utterance.rate = 0.9;
+    const timeout = window.setTimeout(resolve, 5000);
+    const done = () => { window.clearTimeout(timeout); resolve(); };
+    utterance.onend = done;
+    utterance.onerror = done;
+    synth.speak(utterance);
+  });
+}
+
+/** Announce a raise-race result before the answer microphone starts. */
+export function speakRaceAnnouncement(text: string, signal?: AbortSignal): Promise<void> {
+  if (typeof window === "undefined" || !window.speechSynthesis) return Promise.resolve();
+  if (signal?.aborted) return Promise.resolve();
+  const synth = window.speechSynthesis;
+  return new Promise((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "zh-CN";
+    utterance.rate = 0.9;
+    const chineseVoice = synth.getVoices().find((voice) => /^zh(?:-|_)/i.test(voice.lang));
+    if (chineseVoice) utterance.voice = chineseVoice;
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const onAbort = () => {
+      synth.cancel();
+      done();
+    };
+    const timeout = window.setTimeout(() => {
+      synth.cancel();
+      done();
+    }, 6000);
+    utterance.onend = done;
+    utterance.onerror = done;
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (synth.paused) synth.resume();
+    synth.speak(utterance);
+  });
 }
 
 async function playCachedUrl(
@@ -79,7 +145,7 @@ async function playCachedUrl(
 
   const rate = opts.rate ?? 1;
   try {
-    const res = await fetch(url, { signal: playback.abort.signal });
+    const res = await fetch(url, { signal: playback.abort.signal, cache: "no-store" });
     if (current !== playback) return false;
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { detail?: string };
@@ -133,16 +199,16 @@ export async function speakQuestion(
   return playCachedUrl(`/api/speech/audio/${encodeURIComponent(q.id)}`, opts);
 }
 
-/** Play prebuilt raise-hand countdown MP3 + visual ticks. */
+/** Play prebuilt raise-hand countdown MP3 + visual ticks (5→1, ~1s each). */
 export async function speakRaiseHandCountdown(opts: RaiseCountdownOptions = {}): Promise<boolean> {
   const rate = opts.rate ?? 1;
-  const tickMs = Math.max(550, Math.round(900 / rate));
+  const tickMs = Math.max(700, Math.round(1000 / rate));
 
   return playCachedUrl(
     `/api/speech/audio/${encodeURIComponent(RAISE_COUNTDOWN_AUDIO_ID)}`,
     opts,
     (playback) => {
-      const steps: Array<3 | 2 | 1> = [3, 2, 1];
+      const steps: RaiseCountdownDigit[] = [5, 4, 3, 2, 1];
       steps.forEach((n, i) => {
         const id = window.setTimeout(() => {
           if (current !== playback) return;

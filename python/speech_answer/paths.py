@@ -32,9 +32,8 @@ def resolve_answers_path(path: str | Path) -> Path:
 def read_configured_relative_path() -> str:
     """Read relative path from data/answers.path, or return the default."""
     if ANSWERS_PATH_CONFIG.is_file():
-        line = ANSWERS_PATH_CONFIG.read_text(encoding="utf-8").strip().splitlines()
-        if line:
-            candidate = line[0].strip()
+        for line in ANSWERS_PATH_CONFIG.read_text(encoding="utf-8").splitlines():
+            candidate = line.strip()
             if candidate and not candidate.startswith("#"):
                 return candidate
     return DEFAULT_ANSWERS_RELATIVE

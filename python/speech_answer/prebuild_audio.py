@@ -26,6 +26,9 @@ from speech_answer.llm_config import llm_api_key
 from speech_answer.paths import PYTHON_ROOT, read_configured_relative_path, resolve_answers_path
 from speech_answer.question_speech import build_question_speech_text
 
+# Slower than question rate so「举手倒计时，五…一」lands near the 5s early window.
+DEFAULT_COUNTDOWN_RATE = 0.58
+
 
 def _write_mp3(path: Path, audio: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -36,6 +39,7 @@ def prebuild_bank_audio(
     bank_path: Path,
     *,
     rate: float = 0.95,
+    countdown_rate: float = DEFAULT_COUNTDOWN_RATE,
     force: bool = False,
 ) -> dict[str, object]:
     if not llm_api_key():
@@ -50,7 +54,7 @@ def prebuild_bank_audio(
 
     countdown_path = raise_countdown_audio_path(bank_path)
     if force or not countdown_path.is_file():
-        _write_mp3(countdown_path, synthesize(RAISE_COUNTDOWN_TEXT, rate=rate))
+        _write_mp3(countdown_path, synthesize(RAISE_COUNTDOWN_TEXT, rate=countdown_rate))
         built.append(countdown_path.name)
     else:
         skipped.append(countdown_path.name)
@@ -89,7 +93,13 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="Bank path relative to python/ (default: data/answers.path or data/answers.json)",
     )
-    parser.add_argument("--rate", type=float, default=0.95, help="Speech rate 0.5–2.0")
+    parser.add_argument("--rate", type=float, default=0.95, help="Question speech rate 0.5–2.0")
+    parser.add_argument(
+        "--countdown-rate",
+        type=float,
+        default=DEFAULT_COUNTDOWN_RATE,
+        help=f"Raise-countdown speech rate 0.5–2.0 (default {DEFAULT_COUNTDOWN_RATE}, ~5s)",
+    )
     parser.add_argument("--force", action="store_true", help="Rebuild even if MP3 already exists")
     args = parser.parse_args(argv)
 
@@ -100,7 +110,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        result = prebuild_bank_audio(bank_path, rate=args.rate, force=args.force)
+        result = prebuild_bank_audio(
+            bank_path,
+            rate=args.rate,
+            countdown_rate=args.countdown_rate,
+            force=args.force,
+        )
     except CosyVoiceError as exc:
         print(f"prebuild failed: {exc}", file=sys.stderr)
         return 2

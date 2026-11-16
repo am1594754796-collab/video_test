@@ -39,13 +39,14 @@ function frameWithPatch(
   roi: { x0: number; y0: number; x1: number; y1: number },
   w = 40,
   h = 40,
+  background: [number, number, number] = [30, 30, 30],
 ): FramePixels {
   const data = new Uint8ClampedArray(w * h * 4);
   for (let i = 0; i < w * h; i++) {
     const o = i * 4;
-    data[o] = 30;
-    data[o + 1] = 30;
-    data[o + 2] = 30;
+    data[o] = background[0];
+    data[o + 1] = background[1];
+    data[o + 2] = background[2];
     data[o + 3] = 255;
   }
   const x0 = Math.floor(roi.x0 * w);
@@ -66,17 +67,17 @@ function frameWithPatch(
 }
 
 describe("SEAT_PADDLE_COLORS", () => {
-  it("maps seats 1–6 to white/red/blue/green/yellow/black", () => {
+  it("uses white paddles for all six seats", () => {
     expect(SEAT_PADDLE_COLORS).toEqual({
       1: "white",
-      2: "red",
-      3: "blue",
-      4: "green",
-      5: "yellow",
-      6: "black",
+      2: "white",
+      3: "white",
+      4: "white",
+      5: "white",
+      6: "white",
     });
     expect(paddleColorForSeat(1)).toBe("white");
-    expect(paddleColorForSeat(6)).toBe("black");
+    expect(paddleColorForSeat(6)).toBe("white");
   });
 });
 
@@ -106,6 +107,27 @@ describe("scorePaddleColor", () => {
 });
 
 describe("evaluatePaddleRaise", () => {
+  it("detects a small white paddle in a realistic wide camera frame", () => {
+    const frame = frameWithPatch(
+      [245, 245, 245],
+      { x0: 0.37, y0: 0.04, x1: 0.43, y1: 0.16 },
+      320,
+      180,
+    );
+    expect(evaluatePaddleRaise(raisedPose(), frame, "white").raised).toBe(true);
+  });
+
+  it("detects a white paddle against a light background with visible contrast", () => {
+    const frame = frameWithPatch(
+      [250, 250, 250],
+      { x0: 0.37, y0: 0.04, x1: 0.43, y1: 0.16 },
+      320,
+      180,
+      [205, 205, 205],
+    );
+    expect(evaluatePaddleRaise(raisedPose(), frame, "white").raised).toBe(true);
+  });
+
   it("requires strong paddle color; weak pose is enough", () => {
     const frame = frameWithPatch([250, 250, 250], { x0: 0.32, y0: 0.02, x1: 0.52, y1: 0.22 });
     const ev = evaluatePaddleRaise(raisedPose(), frame, "white");
@@ -117,7 +139,24 @@ describe("evaluatePaddleRaise", () => {
   it("rejects matching color when arms hang (no pose assist)", () => {
     const frame = frameWithPatch([250, 250, 250], { x0: 0.32, y0: 0.02, x1: 0.52, y1: 0.22 });
     const ev = evaluatePaddleRaise(armsDown(), frame, "white");
-    expect(ev.paddleScore).toBeGreaterThan(0.35);
+    expect(ev.paddleScore).toBeLessThan(0.2);
+    expect(ev.raised).toBe(false);
+  });
+
+  it("does not count a white shirt away from the raised wrist", () => {
+    const frame = frameWithPatch([250, 250, 250], { x0: 0.32, y0: 0.32, x1: 0.64, y1: 0.6 });
+    expect(evaluatePaddleRaise(raisedPose(), frame, "white").raised).toBe(false);
+  });
+
+  it("does not count a white card beside another position", () => {
+    const frame = frameWithPatch([250, 250, 250], { x0: 0.72, y0: 0.02, x1: 0.92, y1: 0.22 });
+    expect(evaluatePaddleRaise(raisedPose(), frame, "white").raised).toBe(false);
+  });
+
+  it("rejects a uniformly white background behind a raised wrist", () => {
+    const frame = frameWithPatch([250, 250, 250], { x0: 0, y0: 0, x1: 1, y1: 1 });
+    const ev = evaluatePaddleRaise(raisedPose(), frame, "white");
+    expect(ev.paddleScore).toBeLessThan(0.38);
     expect(ev.raised).toBe(false);
   });
 

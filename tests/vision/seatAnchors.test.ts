@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bindPosesToSeatsByIndex,
+  filterPosesForLockedSeats,
   createSeatAnchors,
   matchDetectionsToSeats,
 } from "../../src/vision/detect/seatAnchors";
@@ -18,6 +19,42 @@ function lm(cx: number): PoseLandmark[] {
 }
 
 describe("seatAnchors", () => {
+  it("rejects a neighbor skeleton returned from the missing seat crop", () => {
+    const anchors = createSeatAnchors([
+      { index: 1, trackId: 1, x: 0.2, y: 0.4 },
+      { index: 2, trackId: 2, x: 0.32, y: 0.4 },
+    ]);
+    const valid = filterPosesForLockedSeats(anchors, [
+      { index: 1, x: 0.32, y: 0.4, landmarks: lm(0.32) },
+      { index: 2, x: 0.32, y: 0.4, landmarks: lm(0.32) },
+    ]);
+    expect(valid.map((p) => p.index)).toEqual([2]);
+    const next = bindPosesToSeatsByIndex(anchors, valid, { maxMissed: 0 });
+    expect(next[0]!.landmarks).toBeNull();
+    expect(next[1]!.fresh).toBe(true);
+  });
+  it("keeps at most one skeleton in a seat and rejects boundary ghosts", () => {
+    const anchors = createSeatAnchors([
+      { index: 1, trackId: 1, x: 0.2, y: 0.4 },
+      { index: 2, trackId: 2, x: 0.32, y: 0.4 },
+    ]);
+    const poses = [
+      { index: 1, x: 0.2, y: 0.4, landmarks: lm(0.2) },
+      { index: 1, x: 0.21, y: 0.4, landmarks: lm(0.21) },
+      { index: 2, x: 0.26, y: 0.4, landmarks: lm(0.26) },
+    ];
+    expect(filterPosesForLockedSeats(anchors, poses).map((p) => p.index)).toEqual([1]);
+  });
+  it("does not renumber the right seat when the left person disappears", () => {
+    const anchors = createSeatAnchors([
+      { index: 1, trackId: 1, x: 0.25, y: 0.5 },
+      { index: 2, trackId: 2, x: 0.75, y: 0.5 },
+    ]);
+    const next = matchDetectionsToSeats(anchors, [
+      { x: 0.74, y: 0.5, landmarks: lm(0.74) },
+    ], { maxDistance: 0.14 });
+    expect(next.map((s) => s.fresh)).toEqual([false, true]);
+  });
   it("keeps seat index stable when detections shuffle", () => {
     const anchors = createSeatAnchors([
       { index: 1, trackId: 10, x: 0.2, y: 0.5 },
@@ -61,7 +98,7 @@ describe("seatAnchors", () => {
     expect(anchors[1]!.landmarks).not.toBeNull();
   });
 
-  it("binds poses by locked index even when torso x order is reversed", () => {
+  it("rejects swapped crop labels instead of attaching the wrong skeleton", () => {
     const anchors = createSeatAnchors([
       { index: 1, trackId: 1, x: 0.2, y: 0.5 },
       { index: 2, trackId: 2, x: 0.8, y: 0.5 },
@@ -73,8 +110,6 @@ describe("seatAnchors", () => {
     expect(next.map((s) => s.index)).toEqual([1, 2]);
     expect(next[0]!.x).toBeCloseTo(0.2);
     expect(next[1]!.x).toBeCloseTo(0.8);
-    expect(next[0]!.landmarks?.[POSE.LEFT_SHOULDER]?.x).toBeCloseTo(0.75);
-    expect(next[1]!.landmarks?.[POSE.LEFT_SHOULDER]?.x).toBeCloseTo(0.17);
-    expect(next.every((s) => s.fresh)).toBe(true);
+    expect(next.every((s) => !s.fresh && s.landmarks === null)).toBe(true);
   });
 });

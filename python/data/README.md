@@ -2,6 +2,19 @@
 
 本目录存放**可自行编辑**的题目/答案 JSON。使用时用**相对 `python/` 的路径**指向目标文件。
 
+## 新增的分红保险题库
+
+`data/banks/dividend_insurance/answers.json` 是从 `多选题(1).docx` 新建的独立题库，共 13 题。原来的 `data/answers.json` 保持不变。现在运行 `start-classroom.bat` 会默认加载新题库；`data/answers.path` 也已指向它。在课堂语音页仍可手动填写路径并点击「加载答案库」切换。
+
+如果还要使用「扬声器读题」，先在 `python/` 目录运行：
+
+```bat
+.venv\Scripts\python.exe -m speech_answer.prebuild_audio --answers data/banks/dividend_insurance/answers.json
+```
+
+
+预生成语音会放在这个题库自己的 `audio/` 目录中。转换其他同格式 Word 题库时，可用 `python -m speech_answer.import_docx_bank 原文件.docx data/banks/新题库/answers.json`；转换程序会检查题号、A–D 选项和答案是否完整，不会覆盖已有题库。
+
 ## 给你改的文件
 
 | 文件 | 说明 |

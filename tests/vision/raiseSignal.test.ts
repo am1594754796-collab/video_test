@@ -70,6 +70,28 @@ describe("evaluateHandRaise (MediaPipe joints)", () => {
 });
 
 describe("SeatRaiseTracker", () => {
+  it("confirms a raise across one brief missing pose frame", () => {
+    const t = new SeatRaiseTracker({ minFrames: 2, smoothAlpha: 0, requirePaddle: false });
+    expect(t.update(leftClearRaise(), 1000).raised).toBe(false);
+    expect(t.update(null, 1050).raised).toBe(false);
+    const confirmed = t.update(leftClearRaise(), 1100);
+    expect(confirmed.raised).toBe(true);
+    expect(confirmed.edgeAtMs).toBe(1000);
+  });
+  it("rejects a bright patch beside a wrist unless the arm is actually raised", () => {
+    const pts = armsDown();
+    pts[POSE.LEFT_WRIST] = { x: 0.36, y: 0.32, visibility: 1 };
+    const data = new Uint8ClampedArray(100 * 100 * 4);
+    for (let y = 20; y < 32; y++) for (let x = 28; x < 42; x++) {
+      const o = (y * 100 + x) * 4;
+      data[o] = data[o + 1] = data[o + 2] = data[o + 3] = 255;
+    }
+    const t = new SeatRaiseTracker({
+      minFrames: 1, smoothAlpha: 0, requirePaddle: true,
+      requirePoseForPaddle: true, allowPoseFallback: true,
+    });
+    expect(t.update(pts, 1000, { frame: { data, width: 100, height: 100 } }).raised).toBe(false);
+  });
   it("requires N consecutive MediaPipe frames before confirming raise", () => {
     const t = new SeatRaiseTracker({
       minFrames: 3,
@@ -95,6 +117,33 @@ describe("SeatRaiseTracker", () => {
     expect(u.raised).toBe(true);
     expect(u.rawRaised).toBe(true);
     expect(u.edgeAtMs).toBe(2000);
+  });
+
+  it("falls back to Pose raise when paddle frame is missing", () => {
+    const t = new SeatRaiseTracker({
+      minFrames: 1,
+      scoreThreshold: 0.01,
+      smoothAlpha: 0,
+      requirePaddle: true,
+      allowPoseFallback: true,
+    });
+    const u = t.update(leftClearRaise(), 3000, { frame: null });
+    expect(u.raised).toBe(true);
+    expect(u.rawRaised).toBe(true);
+    expect(u.side).toBe("left");
+  });
+
+  it("stays down on bare hand when pose fallback is disabled", () => {
+    const t = new SeatRaiseTracker({
+      minFrames: 1,
+      scoreThreshold: 0.01,
+      smoothAlpha: 0,
+      requirePaddle: true,
+      allowPoseFallback: false,
+    });
+    const u = t.update(leftClearRaise(), 3000, { frame: null });
+    expect(u.raised).toBe(false);
+    expect(u.rawRaised).toBe(false);
   });
 });
 

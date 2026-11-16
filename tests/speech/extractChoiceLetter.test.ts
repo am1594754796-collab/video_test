@@ -24,4 +24,12 @@ describe("extractLastChoiceLetter", () => {
     expect(extractLastChoiceLetter("选乙")).toBe("B");
     expect(extractLastChoiceLetter("甲然后丙")).toBe("C");
   });
+
+  it("accepts short phonetic transcripts for single spoken letters", () => {
+    expect(extractLastChoiceLetter("诶")).toBe("A");
+    expect(extractLastChoiceLetter("比。")).toBe("B");
+    expect(extractLastChoiceLetter("选西")).toBe("C");
+    expect(extractLastChoiceLetter("迪")).toBe("D");
+    expect(extractLastChoiceLetter("see")).toBe("C");
+  });
 });

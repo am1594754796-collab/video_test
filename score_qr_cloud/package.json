@@ -1,0 +1,13 @@
+{
+  "name": "score-qr-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler pages dev public --d1=DB=score-qr-local",
+    "deploy:cloudflare": "node ./scripts/deploy.mjs",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.158.0"
+  }
+}

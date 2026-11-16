@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import { RaiseRaceRound } from "../../src/round/raiseRaceRound";
 
 describe("RaiseRaceRound", () => {
+  it("compares confirmed edges arriving in nearby frames before locking", () => {
+    const r = new RaiseRaceRound({ openGraceMs: 0, settleMs: 80 });
+    r.beginOpenNow(1000);
+    expect(r.feed([{ personIndex: 2, raised: true, edgeAtMs: 1030 }], 1050)).toEqual([]);
+    expect(r.feed([
+      { personIndex: 2, raised: true },
+      { personIndex: 1, raised: true, edgeAtMs: 1020 },
+    ], 1080)).toEqual([]);
+    expect(r.feed([], 1110)).toEqual([{ type: "winner", personIndex: 1, atMs: 1020 }]);
+  });
+
   it("COUNTDOWN: first raise per person is early-raise once", () => {
     const r = new RaiseRaceRound();
     r.beginCountdown(1000);
@@ -53,31 +64,20 @@ describe("RaiseRaceRound", () => {
     ]);
   });
 
-  it("OPEN after audio end: first valid raise wins and locks", () => {
+  it("OPEN after countdown+delay: first valid raise wins; duplicate open keeps stamp", () => {
     const r = new RaiseRaceRound({ openGraceMs: 0 });
     r.beginCountdown(1000);
     r.feed([{ personIndex: 1, raised: false }], 1000);
-    r.openWindow(2000);
+    r.openWindow(2800); // after countdown hold
     expect(r.phase).toBe("open");
-    expect(r.openTimestampMs).toBe(2000);
+    expect(r.openTimestampMs).toBe(2800);
+    r.openWindow(3000); // duplicate — must not move stamp later
+    expect(r.openTimestampMs).toBe(2800);
 
-    const none = r.feed([{ personIndex: 1, raised: false }], 2010);
-    expect(none).toEqual([]);
-
-    const win = r.feed([{ personIndex: 1, raised: true, edgeAtMs: 2050 }], 2050);
-    expect(win).toEqual([{ type: "winner", personIndex: 1, atMs: 2050 }]);
+    const win = r.feed([{ personIndex: 1, raised: true, edgeAtMs: 2850 }], 2850);
+    expect(win).toEqual([{ type: "winner", personIndex: 1, atMs: 2850 }]);
     expect(r.phase).toBe("locked");
-    expect(r.winner).toEqual({ personIndex: 1, raisedAtMs: 2050 });
-
-    const ignore = r.feed(
-      [
-        { personIndex: 1, raised: true },
-        { personIndex: 2, raised: true, edgeAtMs: 2100 },
-      ],
-      2100,
-    );
-    expect(ignore).toEqual([]);
-    expect(r.winner?.personIndex).toBe(1);
+    expect(r.winner).toEqual({ personIndex: 1, raisedAtMs: 2850 });
   });
 
   it("capture before effective open counts as early even after openWindow", () => {
@@ -93,6 +93,25 @@ describe("RaiseRaceRound", () => {
     r.feed([{ personIndex: 4, raised: false }], 2100);
     const win = r.feed([{ personIndex: 5, raised: true, edgeAtMs: 2090 }], 2090);
     expect(win).toEqual([{ type: "winner", personIndex: 5, atMs: 2090 }]);
+  });
+
+  it("early raiser cannot win by putting hand down and raising again after open", () => {
+    const r = new RaiseRaceRound({ openGraceMs: 0 });
+    r.beginCountdown(1000);
+    r.feed([{ personIndex: 2, raised: false }], 1000);
+    expect(r.feed([{ personIndex: 2, raised: true, edgeAtMs: 1100 }], 1100)).toEqual([
+      { type: "early-raise", personIndex: 2, atMs: 1100 },
+    ]);
+
+    // Detector may flicker to "not raised" — must not re-arm a race edge.
+    r.feed([{ personIndex: 2, raised: false }], 1500);
+    r.openWindow(2000);
+    expect(r.feed([{ personIndex: 2, raised: true, edgeAtMs: 2100 }], 2100)).toEqual([]);
+    expect(r.phase).toBe("open");
+    expect(r.winner).toBeNull();
+
+    const win = r.feed([{ personIndex: 3, raised: true, edgeAtMs: 2200 }], 2200);
+    expect(win).toEqual([{ type: "winner", personIndex: 3, atMs: 2200 }]);
   });
 
   it("beginOpenNow skips countdown for vision-only demo", () => {

@@ -14,6 +14,7 @@ Audio MP3s live in <bank-dir>/audio/ (see speech_answer.prebuild_audio).
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,41 @@ load_env_file(PYTHON_ROOT / "data" / "api.env", override=False)
 load_env_file(PYTHON_ROOT / "data" / "online.env", override=False)
 
 app = FastAPI(title="Classroom Vision + Speech API", version="0.3.0")
+
+CLASSROOM_SCORES_FILE = Path(__file__).resolve().parent / "data" / "classroom_scores.json"
+
+
+class ClassroomScores(BaseModel):
+    scores: dict[str, int]
+    names: dict[str, str] = Field(default_factory=dict)
+    flashing: int | None = None
+
+
+@app.get("/api/classroom-scores")
+def get_classroom_scores() -> dict[str, Any]:
+    try:
+        state = json.loads(CLASSROOM_SCORES_FILE.read_text(encoding="utf-8"))
+        state.setdefault("names", {})
+        return state
+    except FileNotFoundError:
+        return {"scores": {str(i): 0 for i in range(1, 7)}, "names": {}, "flashing": None}
+
+
+@app.post("/api/classroom-scores")
+def save_classroom_scores(payload: ClassroomScores) -> dict[str, bool]:
+    if set(payload.scores) != {str(i) for i in range(1, 7)}:
+        raise HTTPException(status_code=400, detail="需要 1–6 号分数")
+    if any(type(value) is not int or value < 0 or value > 100000 for value in payload.scores.values()):
+        raise HTTPException(status_code=400, detail="分数无效")
+    if any(key not in {str(i) for i in range(1, 7)} or len(value.strip()) > 24 for key, value in payload.names.items()):
+        raise HTTPException(status_code=400, detail="姓名无效")
+    if payload.flashing is not None and payload.flashing not in range(1, 7):
+        raise HTTPException(status_code=400, detail="编号无效")
+    CLASSROOM_SCORES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = CLASSROOM_SCORES_FILE.with_suffix(".tmp")
+    temporary.write_text(payload.model_dump_json(), encoding="utf-8")
+    temporary.replace(CLASSROOM_SCORES_FILE)
+    return {"ok": True}
 
 app.add_middleware(
     CORSMiddleware,

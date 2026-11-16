@@ -59,6 +59,10 @@ export type BandCrop = {
   x0: number;
   /** Right edge in full-frame normalized x (0,1]. */
   x1: number;
+  /** Top edge in full-frame normalized y [0,1). Default 0. */
+  y0?: number;
+  /** Bottom edge in full-frame normalized y (0,1]. Default 1. */
+  y1?: number;
 };
 
 const DEFAULT_BANDS: BandCrop[] = [
@@ -68,16 +72,22 @@ const DEFAULT_BANDS: BandCrop[] = [
 ];
 
 /**
- * Extra side/center strips for numbering under uneven / harsh light
- * (window glare often kills one side of a full-frame detect).
+ * Classroom scout: full frame + side strips + desk-row ROI (zoomed).
+ * Vertical crops matter when people sit behind a table under a wide lens —
+ * horizontal strips alone do not enlarge the person enough for Pose.
  */
 export const NUMBERING_SCOUT_BANDS: BandCrop[] = [
   { x0: 0, x1: 1 },
   { x0: 0, x1: 0.55 },
   { x0: 0.45, x1: 1 },
-  { x0: 0, x1: 0.4 },
-  { x0: 0.3, x1: 0.7 },
-  { x0: 0.6, x1: 1 },
+  { x0: 0, x1: 0.5, y0: 0.22, y1: 0.92 },
+  { x0: 0, x1: 0.42, y0: 0.28, y1: 0.88 },
+  { x0: 0.18, x1: 0.58, y0: 0.28, y1: 0.88 },
+  { x0: 0.45, x1: 1, y0: 0.22, y1: 0.92 },
+  // Wide stage shots: zoom the seated upper-body row without foreground chairs.
+  { x0: 0, x1: 0.36, y0: 0.22, y1: 0.72 },
+  { x0: 0.28, x1: 0.65, y0: 0.22, y1: 0.72 },
+  { x0: 0.58, x1: 1, y0: 0.22, y1: 0.72 },
 ];
 
 const MIN_LOCAL_MODEL_BYTES = 1_000_000;
@@ -200,15 +210,53 @@ export function detectPosesForVideo(
   return poses.map((landmarks) => ({ landmarks }));
 }
 
-function mapLandmarksToFullFrame(
+function bandY0(band: BandCrop): number {
+  return band.y0 ?? 0;
+}
+
+function bandY1(band: BandCrop): number {
+  return band.y1 ?? 1;
+}
+
+export function mapLandmarksToFullFrame(
   landmarks: NormalizedLandmark[],
   band: BandCrop,
 ): NormalizedLandmark[] {
-  const span = Math.max(1e-6, band.x1 - band.x0);
+  const xSpan = Math.max(1e-6, band.x1 - band.x0);
+  const y0 = bandY0(band);
+  const ySpan = Math.max(1e-6, bandY1(band) - y0);
   return landmarks.map((lm) => ({
     ...lm,
-    x: band.x0 + lm.x * span,
+    x: band.x0 + lm.x * xSpan,
+    y: y0 + lm.y * ySpan,
   }));
+}
+
+/**
+ * A lone full-frame person can be rediscovered by every scout strip.
+ * Ignore strip poses on that same torso; keep distant strip-only people.
+ * For crowded full-frame scenes, leave the existing row dedupe in charge.
+ */
+export function stripDuplicatesOfLoneFullPose<T extends PoseFrame>(
+  full: readonly T[],
+  strips: readonly T[],
+  maxDx = 0.1,
+): T[] {
+  if (full.length !== 1) return [...strips];
+  const shoulders = full[0]!.landmarks;
+  const left = shoulders[11];
+  const right = shoulders[12];
+  if (!left || !right) return [...strips];
+  const cx = (left.x + right.x) / 2;
+  const cy = (left.y + right.y) / 2;
+  return strips.filter((pose) => {
+    const ls = pose.landmarks[11];
+    const rs = pose.landmarks[12];
+    if (!ls || !rs) return true;
+    const x = (ls.x + rs.x) / 2;
+    const y = (ls.y + rs.y) / 2;
+    return Math.abs(x - cx) > maxDx || Math.abs(y - cy) > 0.12;
+  });
 }
 
 /**
@@ -235,20 +283,33 @@ export function detectPosesMultiBand(
   if (!fctx) return [];
   fctx.drawImage(video, 0, 0, vw, vh);
 
-  const out: PoseFrame[] = [];
+  const fullPoses: PoseFrame[] = [];
+  const stripPoses: PoseFrame[] = [];
   for (const band of bands) {
-    const isFull = band.x0 <= 0.001 && band.x1 >= 0.999;
+    const y0n = bandY0(band);
+    const y1n = bandY1(band);
+    const isFull =
+      band.x0 <= 0.001 && band.x1 >= 0.999 && y0n <= 0.001 && y1n >= 0.999;
     const x0 = Math.floor(band.x0 * vw);
     const x1 = Math.ceil(band.x1 * vw);
+    const y0 = Math.floor(y0n * vh);
+    const y1 = Math.ceil(y1n * vh);
     const bw = Math.max(1, x1 - x0);
-    if (bandCanvas.width !== bw || bandCanvas.height !== vh) {
-      bandCanvas.width = bw;
-      bandCanvas.height = vh;
+    const bh = Math.max(1, y1 - y0);
+    // Upscale narrow / short ROIs so distant seated people fill Pose's sweet spot.
+    const xSpan = Math.max(1e-6, band.x1 - band.x0);
+    const ySpan = Math.max(1e-6, y1n - y0n);
+    const scale = Math.min(2.8, Math.max(1, 0.92 / Math.max(xSpan, ySpan)));
+    const tw = Math.max(bw, Math.round(bw * scale));
+    const th = Math.max(bh, Math.round(bh * scale));
+    if (bandCanvas.width !== tw || bandCanvas.height !== th) {
+      bandCanvas.width = tw;
+      bandCanvas.height = th;
     }
     const bctx = bandCanvas.getContext("2d", { willReadFrequently: true });
     if (!bctx) continue;
-    bctx.clearRect(0, 0, bw, vh);
-    bctx.drawImage(frameCanvas, x0, 0, bw, vh, 0, 0, bw, vh);
+    bctx.clearRect(0, 0, tw, th);
+    bctx.drawImage(frameCanvas, x0, y0, bw, bh, 0, 0, tw, th);
     const result = landmarker.detect(bandCanvas);
     for (const landmarks of result.landmarks ?? []) {
       const mapped =
@@ -256,14 +317,17 @@ export function detectPosesMultiBand(
       if (!isFull) {
         const cx =
           ((mapped[11]?.x ?? 0.5) + (mapped[12]?.x ?? 0.5)) / 2;
-        // Slightly wider than before so person #2 / #5 near sides can be recovered.
-        if (band.x1 <= 0.6 && cx > 0.48) continue;
-        if (band.x0 >= 0.4 && cx < 0.52) continue;
+        const cy =
+          ((mapped[11]?.y ?? 0.5) + (mapped[12]?.y ?? 0.5)) / 2;
+        // Keep strip hits inside their horizontal band (with margin).
+        if (band.x1 <= 0.6 && cx > Math.min(0.58, band.x1 + 0.08)) continue;
+        if (band.x0 >= 0.4 && cx < Math.max(0.42, band.x0 - 0.08)) continue;
+        if (cy < y0n - 0.06 || cy > y1n + 0.06) continue;
       }
-      out.push({ landmarks: mapped });
+      (isFull ? fullPoses : stripPoses).push({ landmarks: mapped });
     }
   }
-  return out;
+  return [...fullPoses, ...stripDuplicatesOfLoneFullPose(fullPoses, stripPoses)];
 }
 
 export type SeatCropHint = {

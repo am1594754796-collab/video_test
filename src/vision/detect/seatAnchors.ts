@@ -4,9 +4,9 @@
  */
 
 import type { PoseLandmark } from "./isHandRaised";
-import { emaBlendLandmarks } from "./landmarkSmooth";
 import { RaiseDebouncer } from "./raiseDebouncer";
 import type { NumberingSlot } from "./numberingSlots";
+import { torsoCenter } from "./dedupePoses";
 
 export type SeatDetection = {
   x: number;
@@ -137,7 +137,7 @@ export function bindPosesToSeatsByIndex(
 ): SeatAnchor[] {
   const maxMissed = options.maxMissed ?? 12;
   const byIndex = new Map<number, (typeof poses)[number]>();
-  for (const pose of poses) {
+  for (const pose of filterPosesForLockedSeats(anchors, poses)) {
     if (!byIndex.has(pose.index)) byIndex.set(pose.index, pose);
   }
 
@@ -153,12 +153,41 @@ export function bindPosesToSeatsByIndex(
       if (seat.missed > maxMissed) seat.landmarks = null;
       return seat;
     }
-    // Pose-assisted track: EMA-smooth MediaPipe joints; keep locked seat x/y.
-    seat.landmarks = emaBlendLandmarks(seat.landmarks, pose.landmarks, 0.45);
+    // Smooth once in SeatRaiseTracker. Smoothing here as well suppresses short raises.
+    seat.landmarks = pose.landmarks;
     seat.missed = 0;
     seat.fresh = true;
     return seat;
   });
+}
+
+/** Reject crop hits on another seat or duplicate skeletons claimed by two crops. */
+export function filterPosesForLockedSeats<T extends {
+  index: number; landmarks: readonly PoseLandmark[];
+}>(anchors: readonly Pick<SeatAnchor, "index" | "x" | "y">[], poses: readonly T[]): T[] {
+  const ranked = poses.map((pose) => {
+    const center = torsoCenter(pose.landmarks);
+    const own = anchors.find((a) => a.index === pose.index);
+    const distance = own ? Math.hypot(center.x - own.x, (center.y - own.y) * 0.35) : Infinity;
+    return { pose, center, own, distance };
+  }).sort((a, b) => a.distance - b.distance);
+  const kept: typeof ranked = [];
+  for (const candidate of ranked) {
+    const { own, center, distance } = candidate;
+    if (!own || distance > 0.14) continue;
+    if (kept.some((p) => p.own?.index === own.index)) continue;
+    // The torso must belong to this seat's horizontal territory.
+    if (anchors.some((a) => {
+      if (a.index === own.index) return false;
+      const gap = Math.abs(a.x - own.x);
+      const boundary = (a.x + own.x) / 2;
+      const guard = Math.min(0.01, gap * 0.1);
+      return a.x > own.x ? center.x >= boundary - guard : center.x <= boundary + guard;
+    })) continue;
+    if (kept.some((p) => Math.hypot(center.x - p.center.x, (center.y - p.center.y) * 0.4) < 0.045)) continue;
+    kept.push(candidate);
+  }
+  return kept.map((p) => p.pose);
 }
 
 export function seatsToNumberingSlots(anchors: readonly SeatAnchor[]): NumberingSlot[] {

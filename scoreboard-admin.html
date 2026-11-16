@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>计分板管理</title>
+    <link rel="stylesheet" href="/src/app/scoreboard-admin.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>计分板管理</h1>
+        <a href="/scoreboard.html" target="_blank" rel="noopener">打开计分板</a>
+      </header>
+      <p>修改姓名和分数后点击保存；远程计分板会自动更新。</p>
+      <form id="score-form">
+        <div class="grid">
+          <label class="seat">1 号<input name="name1" type="text" maxlength="24" placeholder="姓名（可选）"><input name="score1" type="number" min="0" max="100000" step="1" required aria-label="1 号分数"></label>
+          <label class="seat">2 号<input name="name2" type="text" maxlength="24" placeholder="姓名（可选）"><input name="score2" type="number" min="0" max="100000" step="1" required aria-label="2 号分数"></label>
+          <label class="seat">3 号<input name="name3" type="text" maxlength="24" placeholder="姓名（可选）"><input name="score3" type="number" min="0" max="100000" step="1" required aria-label="3 号分数"></label>
+          <label class="seat">4 号<input name="name4" type="text" maxlength="24" placeholder="姓名（可选）"><input name="score4" type="number" min="0" max="100000" step="1" required aria-label="4 号分数"></label>
+          <label class="seat">5 号<input name="name5" type="text" maxlength="24" placeholder="姓名（可选）"><input name="score5" type="number" min="0" max="100000" step="1" required aria-label="5 号分数"></label>
+          <label class="seat">6 号<input name="name6" type="text" maxlength="24" placeholder="姓名（可选）"><input name="score6" type="number" min="0" max="100000" step="1" required aria-label="6 号分数"></label>
+        </div>
+        <button id="save" type="submit">保存修改</button>
+        <span id="status" role="status">正在读取分数…</span>
+      </form>
+    </main>
+    <script type="module" src="/src/app/scoreboard-admin.ts"></script>
+  </body>
+</html>

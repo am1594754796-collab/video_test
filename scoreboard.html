@@ -7,27 +7,8 @@
     <link rel="stylesheet" href="/src/app/scoreboard.css" />
   </head>
   <body>
-    <main class="app">
-      <header class="top">
-        <div>
-          <p class="brand">教室计分板</p>
-          <h1>实时判题积分</h1>
-        </div>
-        <p class="sub">
-          同时显示 1–6 号与对应分数。请在另一标签页打开
-          <a href="/speech-online.html" target="_blank" rel="noopener">教室抢答页</a>；
-          答对 +1，答错或提前举手 −1，最低为 0。
-        </p>
-      </header>
-
-      <section class="controls">
-        <button type="button" id="btn-clear-scores" class="secondary">清空积分</button>
-        <span id="bus-status" class="api-status">等待抢答页同步…</span>
-      </section>
-
-      <p id="status" class="status" role="status">正在显示 1–6 号积分</p>
-
-      <section id="score-board" class="score-board" aria-live="polite"></section>
+    <main class="slide" aria-label="实时积分">
+      <section id="score-board" class="score-board" aria-live="polite" aria-label="1 至 6 号积分"></section>
     </main>
     <script type="module" src="/src/app/scoreboard.ts"></script>
   </body>

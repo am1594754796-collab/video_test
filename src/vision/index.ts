@@ -3,9 +3,30 @@
  * Scoring / round flow live outside this package.
  */
 
-export { isHandRaised, handsRaised, POSE, type HandRaiseOptions, type PoseLandmark, type HandsRaised } from "./detect/isHandRaised";
+export {
+  isHandRaised,
+  handsRaised,
+  diagnoseHandRaise,
+  POSE,
+  type HandRaiseOptions,
+  type PoseLandmark,
+  type HandsRaised,
+  type HandRaiseDiagnosis,
+  type SideRaiseDiagnosis,
+  type SideRaiseReason,
+} from "./detect/isHandRaised";
+export {
+  isRaiseDetectLogEnabled,
+  SeatRaiseLogger,
+  type RaiseDetectLogPayload,
+} from "./detect/raiseDetectLog";
 export { RaiseDebouncer, type RaiseDebouncerOptions } from "./detect/raiseDebouncer";
 export { dedupePosesByTorso, torsoCenter, type DedupeOptions } from "./detect/dedupePoses";
+export {
+  filterLikelyPersonPoses,
+  isLikelyPersonPose,
+  type PersonPoseQualityOptions,
+} from "./detect/personPoseQuality";
 export { PoseTracker, type TrackedPose, type PoseTrackerOptions } from "./detect/poseTracker";
 export {
   FirstRaiseTracker,
@@ -88,6 +109,7 @@ export {
   createSeatAnchors,
   matchDetectionsToSeats,
   bindPosesToSeatsByIndex,
+  filterPosesForLockedSeats,
   seatsToNumberingSlots,
   type SeatAnchor,
   type SeatDetection,

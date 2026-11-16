@@ -7,12 +7,12 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        main: resolve(__dirname, "index.html"),
-        peopleFast: resolve(__dirname, "people-fast.html"),
-        peopleVideo: resolve(__dirname, "people-video.html"),
-        speechOnline: resolve(__dirname, "speech-online.html"),
         classroom: resolve(__dirname, "classroom.html"),
         scoreboard: resolve(__dirname, "scoreboard.html"),
+        scoreboardAdmin: resolve(__dirname, "scoreboard-admin.html"),
+        vision: resolve(__dirname, "vision.html"),
+        visionFace: resolve(__dirname, "vision-face.html"),
+        countdown: resolve(__dirname, "countdown.html"),
       },
     },
   },

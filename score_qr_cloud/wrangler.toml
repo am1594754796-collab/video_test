@@ -1,0 +1,11 @@
+name = "score-qr"
+compatibility_date = "2024-11-12"
+pages_build_output_dir = "public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "score-qr"
+database_id = "0374f3d4-2491-4f80-b19f-4ee3f773a6e8"
+migrations_dir = "migrations"
+
+

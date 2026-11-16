@@ -1,0 +1,8 @@
+{
+  "name": "classroom-countdown",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy:cloudflare": "node ./scripts/deploy.mjs"
+  }
+}

@@ -12,6 +12,8 @@ python/score_qr/data/
 python/data/online.env
 **/online.env
 python/data/api.env
+python/data/classroom_scores.json
+python/data/scoreboard-tunnel*.log
 **/api.env
 # Prebuilt CosyVoice MP3s (generate locally; see python/data/audio/README.md)
 python/data/audio/*.mp3

@@ -40,4 +40,35 @@ describe("PoseTracker", () => {
     expect(held).toHaveLength(1);
     expect(held[0].trackId).toBe(id);
   });
+
+  it("keeps sticky display numbers when one person briefly drops", () => {
+    const tracker = new PoseTracker({
+      matchDistance: 0.2,
+      maxMissed: 4,
+      minSeen: 1,
+      stickyDisplay: true,
+    });
+    const full = tracker.update([poseAt(0.2), poseAt(0.5), poseAt(0.8)]);
+    expect(full.map((t) => t.displayIndex)).toEqual([1, 2, 3]);
+    const midId = full[1]!.trackId;
+
+    const dip = tracker.update([poseAt(0.2), poseAt(0.8)]);
+    expect(dip).toHaveLength(3);
+    expect(dip.find((t) => t.trackId === midId)?.displayIndex).toBe(2);
+    expect(dip.map((t) => t.displayIndex).sort()).toEqual([1, 2, 3]);
+  });
+
+  it("ignores a one-frame false person until minSeen", () => {
+    const tracker = new PoseTracker({
+      matchDistance: 0.2,
+      maxMissed: 2,
+      minSeen: 2,
+      stickyDisplay: true,
+    });
+    tracker.update([poseAt(0.3), poseAt(0.7)]);
+    const flash = tracker.update([poseAt(0.3), poseAt(0.5), poseAt(0.7)]);
+    expect(flash).toHaveLength(2);
+    const confirmed = tracker.update([poseAt(0.3), poseAt(0.5), poseAt(0.7)]);
+    expect(confirmed).toHaveLength(3);
+  });
 });

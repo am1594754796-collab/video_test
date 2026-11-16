@@ -1,236 +1,62 @@
-# 教室抢答模块（视觉 + 语音）
+# 课堂互动
 
-教室场景本地网页：**视觉举手识别** + **CosyVoice 读题** + **A–D 语音作答** + **独立计分板**。完整抢答流程由 `start-classroom.bat` 启动，在一个页面中运行；视觉和计分板调试页仍可单独打开。
+项目的课堂互动、二维码打分和倒计时可以分别启动，也可以同时使用。
 
-| 页面 | 地址 | 启动 | 需要 |
-|------|------|------|------|
-| 举手单人调试 | http://localhost:5173/ | `start.bat` | Node.js |
-| **人物编号 · 视频回放检测** | http://localhost:5173/people-video.html | `start-people-video.bat` | **仅 Node.js** |
-| **人物编号 · 相机快版** | http://localhost:5173/people-fast.html | `start-people-fast.bat` | **仅 Node.js** + 相机 |
-| **计分板（仅展示）** | http://localhost:5173/scoreboard.html | `start-scoreboard.bat` | 同域其它页即可 |
-| **正式题目展示：视觉 + 读题 + 语音作答** | http://localhost:5173/classroom.html | `start-classroom.bat` | Node.js **+ Python** · 摄像头、麦克风、联网 |
-| **带实时画面的测试页** | http://localhost:5173/speech-online.html | 手动打开 | 同上 |
+## 独立倒计时
 
-完整抢答页内置视觉检测；独立计分板通过浏览器跨标签页总线订阅事件。
+这是**单独页面**，与举手识别、课堂抢答、计分板无关。任意电脑打开即可，**不需要你的电脑开机**。
 
-仓库：https://github.com/am1594754796-collab/video_test
+永久公开链接：
 
-**换机 / 移植：** [`deploy/README.md`](deploy/README.md)  
-**API 可插拔：** [`docs/API-PROVIDERS.md`](docs/API-PROVIDERS.md)  
-**语音细则：** [`docs/SETUP-speech-v2.md`](docs/SETUP-speech-v2.md)
+- https://classroom-countdown.pages.dev/
 
----
+改页面后双击 `部署倒计时到云端.bat` 可覆盖更新（链接一般不变）。本机调试可用 `start-countdown.bat`。
 
-## 端口与单独启动约定
+设置分钟和秒数后点击开始；支持暂停、继续和重置。**最后 10 秒持续闹钟式叮铃**，结束时再播提示音。每人打开后自己点开始，互不同步。
 
-| 端口 | 服务 |
-|------|------|
-| `5173` | Vite 前端（所有网页共用） |
-| `8765` | Python API（**读题**需要） |
+## 1. 举手检测与抢答
 
-- **不要同时开多个** `start-*.bat`（会抢 `5173`）。
-- 已有 Vite 在跑时：只需在浏览器**另开标签**访问其它页面地址。
-- 每个启动脚本**只打开自己的页面**；联调时自行打开其余标签。
+运行 `start-classroom.bat`。脚本启动视觉举手检测、题目朗读与语音作答、课堂积分板，并打开：
 
----
+默认 `start-classroom.bat` → `vision.html`：**只用肩膀姿态**定位并编号，举手也按肩/肘/腕判定（不启用人脸检测）。需要人脸锁位时再运行 `start-classroom-face.bat`（`vision-face.html`）。两个举手识别页会争用摄像头，请一次只开一个。
 
-## 最小配置 · 视频 / 相机检测
+- 举手识别：`http://127.0.0.1:5173/vision.html`（相机与检测画面；独占摄像头）
+- 抢答页：`http://127.0.0.1:5173/classroom.html`（读题与听答）
+- 积分板：`http://127.0.0.1:5173/scoreboard.html`
 
-`people-video.html` 与 `people-fast.html` 共用：
+默认加载分红保险新题库（13 题）及其已生成的语音。
 
-`MediaPipe 多人 Pose 左→右编号 → 近距切开局部放大 → 严格举手（首帧满足即举手）`
+### 临时公网计分板（其他电脑同步观看）
 
-**不依赖** Python API、`api.env`、千问 Key。
+双击 `start-classroom-public.bat`，脚本会启动本机课堂页面、计分板和临时隧道，等公网地址可访问后在同一个窗口打印一次性 `https://…trycloudflare.com/scoreboard.html` 链接。复制给其他电脑即可实时观看同一份积分；抢答操作仍在本机完成。保持窗口和电脑联网；重新启动隧道会得到新地址。
 
-### 环境要求
+本机可打开 `http://127.0.0.1:5173/scoreboard-admin.html` 管理六个座位的显示姓名和积分。保存后，本机题目页从修改后的积分继续计分；公网计分板约一秒内更新。管理页不通过临时隧道开放。
 
-| 项 | 要求 |
-|----|------|
-| Node.js | **18+** |
-| 浏览器 | Chrome / Edge；须用 `http://localhost`，不要用 `file://` |
-| 网络 | 安装时拉 npm；首次下载 MediaPipe 模型需访问 Google Storage |
-| 视频页 | 本地浏览器可解码的视频（如 `mp4`） |
-| 相机页 | 本机摄像头权限 |
+需要 Node.js、Python、摄像头和麦克风。启动脚本会准备前端依赖和 MediaPipe 模型；题目语音需事先生成。先在举手识别页允许摄像头并锁定人数，再在抢答页开始本题。保持启动窗口运行，结束时按 Enter 停止本次启动的服务。此功能不启动或关闭二维码评分。
 
-### 一次性安装
+## 2. 二维码打分
 
-```bat
-npm.cmd install
+### 局域网启动（本机保存数据）
 
-mkdir public\mediapipe 2>nul
-xcopy /E /I /Y node_modules\@mediapipe\tasks-vision\wasm public\mediapipe\wasm
+双击 `start-score-qr.bat`，保持窗口运行。启动后窗口会显示电脑的局域网地址，手机和电脑连接到同一个可互通的局域网，就能访问管理页、单人展示页和六人平均分页。六个独立二维码位于管理页和单人展示页。评分数据保存在 `python/score_qr/data/scores.db`，不需要云端部署。
 
-mkdir public\mediapipe\models 2>nul
-curl -L -o public\mediapipe\models\pose_landmarker_full.task ^
-  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
-```
+### 云端固定地址（可选）
 
-模型说明见 [`public/mediapipe/README.md`](public/mediapipe/README.md)。
+双击 `部署扫码评分到云端.bat`。首次会引导 Cloudflare 登录，成功后得到长期有效的 `https://score-qr.pages.dev`（地址固定，电脑可关机）。  
 
-### 启动
+当前云端为**两人版单页**：
+- 展示页：`/`（一个统一二维码 + 两人实时分数 + 可配置两人名称 + 一键清空）
+- 扫码打分：`/s`（扫码后按已配置名称选择给谁打分）
 
-```bat
-npm.cmd run dev
-REM 或双击对应 start-people-*.bat / start-people-video.bat
-```
+数据在 Cloudflare D1；改代码后再次运行同一部署脚本即可覆盖更新，链接一般不变。
 
-| 用途 | 地址 |
-|------|------|
-| 本地视频检测 | http://localhost:5173/people-video.html |
-| 实时相机检测 | http://localhost:5173/people-fast.html |
+### 手机不连接同一 Wi-Fi 时扫码（本机保存数据）
 
-**视频页：** 等「模型已就绪」→ 选视频 → **开始检测** → 设「需要人数」→ 锁定编号后举手。  
-**相机页：** **打开相机** → 设人数 → 人齐锁定 → 举手 / **下一轮** / **重新编号**。
+双击 `start-score-qr-public.bat`。脚本使用 cloudflared 创建临时公网 HTTPS 地址，确认本机服务与隧道已启动后在窗口打印六人平均分页、单人展示页和六个评分入口的完整链接；不会自动打开浏览器，你可以自行复制打开或分享。本机管理页仍为 `http://127.0.0.1:8000/`，其中显示六个对应公网地址的二维码。公网开放打分页、展示页及其只读数据接口，管理页和清空评分功能仍只在本机；评分仍保存在本机的 `python/score_qr/data/scores.db`。电脑必须保持联网和启动窗口运行；每次重启地址与二维码都会变化。需要安装 cloudflared。不要同时运行两个本机启动脚本，它们共用 8000 端口。
 
----
+同一浏览器对每个编号只能评分一次，可以分别给六个编号评分。识别依据是浏览器 Cookie；换浏览器、无痕模式或清除 Cookie 后会被视为新设备。
 
-## 读题 · CosyVoice
+## 验证
 
-### 完整抢答工作流程
-
-1. 首次准备：安装 Node/Python 依赖与 MediaPipe 模型，并运行 `python -m speech_answer.prebuild_audio` 生成题目和倒计时 MP3。
-2. 双击 `start-classroom.bat`。脚本检查 MediaPipe 和预生成音频，等待 Python API（8765）与 Vite（5173）就绪，然后自动打开正式题目展示页 `classroom.html` 和独立计分板页。保持脚本窗口运行；结束时在窗口按 Enter 停止本次启动的服务。浏览器允许摄像头和麦克风。
-3. 正式页默认检测 6 人并从左到右编号；排序锁定之前「开始本题」不可点击。若人数需要调整，输入 1–6 后点「重新检测人数并排序」。重新编号会重置本页演示分数。
-4. 选择题目，点「开始本题」。系统读题，随后播放举手倒计时；倒计时内提前举手扣 1 分。
-5. 倒计时结束后，视觉识别锁定最先举手者。浏览器开始听取 A–D；每个 5 秒窗口以最后一次有效选项为准，未听到就继续听。
-6. 系统按标准答案判题并计分（对 +1，错 −1，最低 0），展示判题结果和分数 5 秒后自动朗读下一题，之后重复倒计时、抢答和听答流程。只有第一题需要点「开始本题」。末题展示 5 秒后结束；可手动选题重新开始。
-
-「停止本轮」可中止播放、倒计时或听答；独立计分板 `scoreboard.html` 会由脚本自动打开。计分板固定显示 1–6 号，打开时同步已有分数，判题后实时更新。
-
-| 项 | 说明 |
-|----|------|
-| 启动 | `start-speech-online.bat`（会起 Python API + Vite，只开读题页） |
-| 页面 | http://localhost:5173/speech-online.html |
-| 需要 | Node + Python；联网；Chrome / Edge |
-
-**操作：** 先预生成语音 → 运行 `start-classroom.bat` → 允许摄像头和麦克风 → 设参与人数并等待编号锁定 → 选题并点「开始本题」。系统播放题目 MP3、播举手倒计时，检测最先举手者，自动听 A–D 选项（每 5 秒一轮，取最后一次），按对错 ±1 分并自动进入下一题。末题结束后停下。
-
-**预生成语音**（改题后重跑）：
-
-```bat
-cd python
-.venv\Scripts\python.exe -m speech_answer.prebuild_audio
-```
-
-MP3 写在 `python/data/audio/`（见该目录 README）。
-
-**配置：**
-
-```bat
-npm.cmd install
-cd python
-python -m venv .venv
-.venv\Scripts\pip.exe install -r requirements.txt
-cd ..
-copy deploy\api.env.example python\data\api.env
-```
-
-编辑 `python\data\api.env`，只填 `LLM_API_KEY=...`，改完**重启** uvicorn。详见 [`deploy/README.md`](deploy/README.md)。
-
-题库默认 `python/data/answers.json`（由 `answers.path` 指向），读题使用其中的 `prompt` / `options`。
-
----
-
-## 计分板
-
-| 项 | 说明 |
-|----|------|
-| 启动 | `start-scoreboard.bat`（**只开计分板**） |
-| 页面 | http://localhost:5173/scoreboard.html |
-
-联调：另开视觉页（同源同端口）→ 锁定编号 → 最先举手闪烁 → 视觉页「下一轮」。读题页不参与计分。
-
----
-
-## 扫码打分（独立）
-
-与上面的计分板无关。本机 Flask 服务，手机扫六个二维码，分数记到你指定的编号。
-
-| 项 | 说明 |
-|----|------|
-| 启动 | `start-score-qr.bat` |
-| 管理页 | http://127.0.0.1:8000 （改编号、看二维码、看总分和平均分） |
-| 按编号调用 | `GET http://127.0.0.1:8000/api/summary/编号` → `count`、`total`、`average` |
-| 数据 | `python/score_qr/data/scores.db`（不进 Git） |
-
-手机和电脑需在同一 Wi-Fi。首次运行若系统询问防火墙，选择允许访问。
-
----
-
-## 一键启动速查
-
-| 脚本 | 打开页面 |
-|------|----------|
-| `start.bat` / `start.ps1` | 举手单人调试 `/` |
-| `start-people-fast.bat` | 相机多人检测 |
-| `start-people-video.bat` | 视频回放检测 |
-| `start-scoreboard.bat` | 计分板 |
-| `start-classroom.bat` | 完整抢答：视觉 + 读题 + 语音作答（含 Python API） |
-| `start-speech-online.bat` | 同上，旧入口保留 |
-| `start-python-api.bat` | 仅 Python API（8765） |
-| `start-score-qr.bat` | 扫码打分（8000，独立） |
-
-已有服务在跑时，浏览器直接打开上表地址即可，无需再跑第二个 `start-*`。
-
----
-
-## 常用命令
-
-```bat
-npm.cmd install
-npm.cmd run dev
-npm.cmd test
-npm.cmd run build
-```
-
-Python 测试（在 `python/` 且已激活 `.venv`）：
-
-```bat
-python -m pytest tests -q
-```
-
----
-
-## 目录结构（当前保留）
-
-```
-video_test/
-  index.html                 ← 单人举手调试
-  people-fast.html           ← 多人相机
-  people-video.html          ← 视频回放
-  scoreboard.html            ← 计分板
-  classroom.html             ← 正式题目展示（隐藏实时画面）
-  speech-online.html         ← 带画面的测试页
-  start-*.bat / start.ps1
-  public/mediapipe/          ← WASM + Pose 模型
-  src/vision/                ← MediaPipe / 编号 / 举手
-  src/app/                   ← 各页入口脚本
-  python/                    ← 语音匹配 API（8765）
-  deploy/                    ← 换机配置
-  docs/ / tests/
-```
-
----
-
-## 常见问题
-
-**Q: 同时开了多个 start，端口冲突**  
-A: 只保留一个 Vite；其余页面用浏览器标签打开。
-
-**Q: 语音页显示 API 未连接**  
-A: 用 `start-speech-online.bat`，或先跑 `start-python-api.bat` 再 `npm run dev`。
-
-**Q: 打不开相机**  
-A: 使用 `http://localhost:5173`；检查系统相机权限。
-
-**Q: 换电脑缺依赖**  
-A: 不要复制 `node_modules` / `.venv`；按 [`deploy/README.md`](deploy/README.md) 重装。
-
----
-
-## 文档索引
-
-- 需求汇总：[`docs/需求/README.md`](docs/需求/README.md)
-- 换机：[`deploy/README.md`](deploy/README.md)
-- 语音配置：[`docs/SETUP-speech-v2.md`](docs/SETUP-speech-v2.md)
-- 规格：`SPEC.md` · 任务：`tasks/` · 日志：`docs/worklog/`
+- 前端：`npm.cmd run build`
+- Python：在 `python` 目录运行 `.venv\Scripts\python.exe -m pytest tests -q`

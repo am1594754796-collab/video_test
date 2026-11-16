@@ -5,15 +5,17 @@
 
 export type ClassroomEvent =
   | { type: "numbering-locked"; seats: number[]; source?: string }
+  | { type: "vision-state-request"; source?: string }
+  | { type: "vision-state"; seats: number[]; source?: string }
   | { type: "numbering-cleared"; source?: string }
   | { type: "first-raise"; personIndex: number; source?: string }
-  /** Countdown audio started (speech page). Vision enters COUNTDOWN. */
+  /** Countdown started — vision COUNTDOWN: raises are early (扣分). */
   | { type: "raise-countdown-start"; questionId?: string; source?: string }
-  /** Countdown audio ended (speech page). Vision stamps local open time. */
+  /** Race opens after early window (5s + 0.1s). */
   | { type: "raise-window-open"; source?: string }
   /** Speech stopped mid-countdown / round aborted. */
   | { type: "raise-round-abort"; source?: string }
-  /** Raised during COUNTDOWN (or before open grace). Scoreboard may deduct. */
+  /** Raised during countdown early window (or before open grace). Scoreboard deducts. */
   | { type: "early-raise"; personIndex: number; atMs?: number; source?: string }
   | { type: "race-reset"; source?: string }
   /** @deprecated Prefer answer-result; kept as passed:true shorthand. */
@@ -29,7 +31,12 @@ export type ClassroomEvent =
     }
   | { type: "scores-clear"; source?: string }
   | { type: "scores-snapshot-request"; source?: string }
-  | { type: "scores-snapshot"; scores: Record<string, number>; source?: string };
+  | { type: "scores-snapshot"; scores: Record<string, number>; source?: string }
+  | { type: "scores-admin-set"; scores: Record<string, number>; names: Record<string, string>; source?: string }
+  /** Classroom asks vision page to re-run count lock / numbering. */
+  | { type: "vision-relock-request"; expectedCount?: number; source?: string }
+  /** A vision tab is about to open the camera; other vision tabs must release it. */
+  | { type: "vision-camera-claim"; tabId: string; source?: string };
 
 const CHANNEL = "classroom-vision-speech-score";
 const STORAGE_KEY = "classroom-bus-ping";

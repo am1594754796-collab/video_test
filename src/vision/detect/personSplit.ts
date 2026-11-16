@@ -90,10 +90,7 @@ export function numberPosesLeftToRight(
   const ranked = [...poses]
     .map((p) => {
       const c = torsoCenter(p.landmarks);
-      const nose = p.landmarks[POSE.NOSE];
-      const x = visible(nose, 0.25) ? nose.x : c.x;
-      const y = visible(nose, 0.25) ? nose.y : Math.max(0, c.y - 0.1);
-      return { landmarks: p.landmarks, x, y };
+      return { landmarks: p.landmarks, x: c.x, y: c.y };
     })
     .sort((a, b) => a.x - b.x || a.y - b.y)
     .slice(0, n);
@@ -140,18 +137,8 @@ export function personBoxesFromSeats(
   }[],
 ): PersonBox[] {
   const ordered = [...seats].sort((a, b) => a.index - b.index);
-  const withPose = ordered.filter((s) => s.landmarks && s.landmarks.length >= 17);
-  if (withPose.length === ordered.length && ordered.length > 0) {
-    return personBoxesFromPoses(
-      ordered.map((s) => ({
-        index: s.index,
-        x: s.x,
-        y: s.y,
-        landmarks: s.landmarks!,
-      })),
-    );
-  }
-  // Wider fallback crops: harsh light / brief pose miss shrinks landmarks; keep ROI loose.
+  // Seat centers are fixed at lock time. A bad landmark must never drag its
+  // next crop over to a neighbor and reinforce an identity swap.
   const raw = ordered.map((s) =>
     clipBox({
       xMin: s.x - 0.12,

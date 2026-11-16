@@ -10,12 +10,18 @@ echo ========================================
 echo.
 
 if not exist "python\.venv\Scripts\python.exe" (
-  echo [错误] 找不到 python\.venv\Scripts\python.exe
-  echo 请先安装 Python 3，然后在 python 目录执行：
-  echo   python -m venv .venv
-  echo   .venv\Scripts\python.exe -m pip install -r score_qr\requirements.txt
-  pause
-  exit /b 1
+  where python >nul 2>&1
+  if errorlevel 1 (
+    echo [错误] 找不到 Python 3，请先安装 Python。
+    pause
+    exit /b 1
+  )
+  python -m venv python\.venv
+  if errorlevel 1 (
+    echo [错误] 创建 Python 环境失败。
+    pause
+    exit /b 1
+  )
 )
 
 cd python
@@ -31,7 +37,7 @@ if errorlevel 1 (
 )
 
 echo 管理页: http://127.0.0.1:8000
-echo 按编号查询: http://127.0.0.1:8000/api/summary/编号
+echo 局域网地址和单人展示页将在下方显示
 echo.
 .venv\Scripts\python.exe -m score_qr
 if errorlevel 1 (

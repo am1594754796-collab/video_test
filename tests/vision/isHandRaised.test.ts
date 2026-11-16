@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  diagnoseHandRaise,
   handsRaised,
   isHandRaised,
   POSE,
@@ -44,10 +45,30 @@ describe("isHandRaised", () => {
     expect(handsRaised(armsDown())).toEqual({ left: false, right: false });
   });
 
-  it("returns false when wrist is only above the elbow but still below the shoulder", () => {
+  it("diagnoseHandRaise explains arms-down and matches the boolean predicate", () => {
+    const down = diagnoseHandRaise(armsDown(), { classroom: true });
+    expect(down.raised).toBe(false);
+    expect(down.left.reason).toBe("wrist_below_elbow");
+    expect(down.right.reason).toBe("wrist_below_elbow");
+
+    const up = diagnoseHandRaise(leftBentRaise(), { classroom: true });
+    expect(up.raised).toBe(true);
+    expect(up.left.reason).toBe("ok");
+    expect(up.right.raised).toBe(false);
+  });
+
+  it("returns false when wrist is only above the elbow but still well below the shoulder", () => {
     const pts = armsDown();
     pts[POSE.LEFT_WRIST] = { x: 0.36, y: 0.42, visibility: 1 };
     expect(isHandRaised(pts)).toBe(false);
+  });
+
+  it("classroom: accepts bent raise when wrist is slightly below the shoulder", () => {
+    // Fingers often clear the shoulder while MediaPipe's wrist sits just under it.
+    const pts = armsDown();
+    pts[POSE.LEFT_ELBOW] = { x: 0.28, y: 0.4, visibility: 1 };
+    pts[POSE.LEFT_WRIST] = { x: 0.44, y: 0.37, visibility: 1 }; // shoulder y=0.35; wrist above elbow
+    expect(isHandRaised(pts, { classroom: true, margin: 0.01, minVisibility: 0.25 })).toBe(true);
   });
 
   it("detects a bent left-arm raise without marking the right arm", () => {
@@ -101,6 +122,15 @@ describe("isHandRaised", () => {
     expect(isHandRaised(self, { otherLandmarks: [neighbor] })).toBe(true);
     expect(handsRaised(self, { otherLandmarks: [neighbor] }).left).toBe(true);
   });
+  it("does not reject a real raise merely because a close neighbor's torso is nearer", () => {
+    const self = leftBentRaise();
+    const neighbor = armsDown();
+    neighbor[POSE.LEFT_SHOULDER] = { x: 0.34, y: 0.35, visibility: 1 };
+    neighbor[POSE.RIGHT_SHOULDER] = { x: 0.44, y: 0.35, visibility: 1 };
+    neighbor[POSE.LEFT_WRIST] = { x: 0.3, y: 0.7, visibility: 1 };
+    neighbor[POSE.RIGHT_WRIST] = { x: 0.48, y: 0.7, visibility: 1 };
+    expect(isHandRaised(self, { classroom: true, otherLandmarks: [neighbor] })).toBe(true);
+  });
 
   it("classroom mode detects temple raise and rejects lateral lean", () => {
     const temple = armsDown();
@@ -114,6 +144,23 @@ describe("isHandRaised", () => {
     lean[POSE.RIGHT_ELBOW] = { x: 0.78, y: 0.34, visibility: 1 };
     lean[POSE.RIGHT_WRIST] = { x: 0.82, y: 0.28, visibility: 1 };
     expect(isHandRaised(lean, { classroom: true, margin: 0.02 })).toBe(false);
+  });
+  it("detects a small distant person raising a wrist above the shoulder", () => {
+    const pts = armsDown();
+    pts[POSE.NOSE] = { x: 0.5, y: 0.42, visibility: 0.5 };
+    pts[POSE.LEFT_SHOULDER] = { x: 0.48, y: 0.48, visibility: 0.5 };
+    pts[POSE.RIGHT_SHOULDER] = { x: 0.52, y: 0.48, visibility: 0.5 };
+    pts[POSE.LEFT_ELBOW] = { x: 0.47, y: 0.46, visibility: 0.4 };
+    pts[POSE.LEFT_WRIST] = { x: 0.47, y: 0.45, visibility: 0.3 };
+    expect(isHandRaised(pts, { classroom: true, minVisibility: 0.25 })).toBe(true);
+    pts[POSE.LEFT_WRIST] = { x: 0.47, y: 0.49, visibility: 0.3 };
+    expect(isHandRaised(pts, { classroom: true, minVisibility: 0.25 })).toBe(false);
+  });
+  it("counts a clear diagonal raise beyond the face", () => {
+    const pts = armsDown();
+    pts[POSE.RIGHT_ELBOW] = { x: 0.71, y: 0.27, visibility: 0.8 };
+    pts[POSE.RIGHT_WRIST] = { x: 0.78, y: 0.12, visibility: 0.8 };
+    expect(isHandRaised(pts, { classroom: true, minVisibility: 0.25 })).toBe(true);
   });
 
   it("rejects large torso tilt when the wrist is only beside the raised shoulder", () => {

@@ -1,17 +1,16 @@
 /**
- * Per-seat raise-paddle colors (left→right seat index 1–6).
- * Seat 1 defaults to white; 2–6 use mutually distant hues.
+ * All six seats use a white raise paddle. Seat identity comes from pose tracking.
  */
 
 export type PaddleColor = "white" | "red" | "blue" | "green" | "yellow" | "black";
 
 export const SEAT_PADDLE_COLORS: Readonly<Record<number, PaddleColor>> = {
   1: "white",
-  2: "red",
-  3: "blue",
-  4: "green",
-  5: "yellow",
-  6: "black",
+  2: "white",
+  3: "white",
+  4: "white",
+  5: "white",
+  6: "white",
 };
 
 export const PADDLE_COLOR_LABELS: Readonly<Record<PaddleColor, string>> = {

@@ -1,5 +1,5 @@
 /**
- * Round / race flow — countdown gate + early-raise / first-raise decisions.
+ * Round / race flow — early gate during countdown; then first-raise.
  * Vision detection stays in `src/vision`; scoring UI stays in app pages.
  */
 

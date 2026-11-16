@@ -1,5 +1,6 @@
 /**
- * Classroom raise signal: colored paddle (primary) + weak pose assist + N-frame confirm.
+ * Classroom raise signal: white paddle by the person's wrist (primary)
+ * + weak pose assist + N-frame confirm.
  *
  * Pipeline:
  *   MediaPipe Pose (EMA) + frame pixels → evaluatePaddleRaise (color-heavy)
@@ -11,6 +12,7 @@
 import { RaiseDebouncer } from "./raiseDebouncer";
 import { emaBlendLandmarks } from "./landmarkSmooth";
 import {
+  diagnoseHandRaise,
   handsRaised,
   POSE,
   type HandRaiseOptions,
@@ -22,6 +24,7 @@ import {
   type FramePixels,
   type PaddleRaiseOptions,
 } from "./paddleSignal";
+import { isRaiseDetectLogEnabled, SeatRaiseLogger } from "./raiseDetectLog";
 
 export type RaiseEval = {
   raised: boolean;
@@ -106,15 +109,22 @@ export type SeatRaiseTrackerOptions = {
   scoreThreshold?: number;
   /** EMA alpha for pose-assisted landmark smoothing (0 = off). */
   smoothAlpha?: number;
-  /** Seat index 1–6 → paddle color. Required for classroom paddle mode. */
+  /** Seat index 1–6; all seats currently use a white paddle. */
   seatIndex?: number;
   /** Override paddle color (defaults from seatIndex). */
   paddleColor?: PaddleColor;
   /**
-   * When true (default), require paddle color in the frame.
-   * Set false only for pose-only unit tests / legacy debug.
+   * When true (default), try paddle color first.
+   * Set false for pose-only unit tests / legacy debug.
    */
   requirePaddle?: boolean;
+  /** Require a real raised-arm pose before a bright patch can count as a paddle. */
+  requirePoseForPaddle?: boolean;
+  /**
+   * When paddle is missing / weak / frame unread, accept a clear Pose raise.
+   * Default true so bare-hand classroom raises still light the HUD.
+   */
+  allowPoseFallback?: boolean;
   raiseOptions?: HandRaiseOptions;
   paddleOptions?: PaddleRaiseOptions;
 };
@@ -131,9 +141,14 @@ export class SeatRaiseTracker {
   private readonly smoothAlpha: number;
   private readonly paddleColor: PaddleColor;
   private readonly requirePaddle: boolean;
+  private readonly requirePoseForPaddle: boolean;
+  private readonly allowPoseFallback: boolean;
+  private readonly logger: SeatRaiseLogger;
   private prevConfirmed = false;
   private confirmStreakStartMs = 0;
   private smoothed: PoseLandmark[] | null = null;
+  private lastPoseAtMs = 0;
+  private missingFrames = 0;
 
   constructor(options: SeatRaiseTrackerOptions = {}) {
     this.debouncer = new RaiseDebouncer({ minFrames: options.minFrames ?? 1 });
@@ -143,6 +158,9 @@ export class SeatRaiseTracker {
     this.smoothAlpha = options.smoothAlpha ?? 0.45;
     this.paddleColor = options.paddleColor ?? paddleColorForSeat(options.seatIndex ?? 1);
     this.requirePaddle = options.requirePaddle ?? true;
+    this.requirePoseForPaddle = options.requirePoseForPaddle ?? false;
+    this.allowPoseFallback = options.allowPoseFallback ?? true;
+    this.logger = new SeatRaiseLogger(options.seatIndex ?? 0);
   }
 
   get color(): PaddleColor {
@@ -154,6 +172,9 @@ export class SeatRaiseTracker {
     this.prevConfirmed = false;
     this.confirmStreakStartMs = 0;
     this.smoothed = null;
+    this.lastPoseAtMs = 0;
+    this.missingFrames = 0;
+    this.logger.reset();
   }
 
   update(
@@ -166,12 +187,25 @@ export class SeatRaiseTracker {
       : (ctx as SeatRaiseFrameContext);
 
     if (!landmarks) {
+      // A single missed Pose frame should not erase the first confirmed hit.
+      if (this.lastPoseAtMs > 0 && this.missingFrames === 0 && nowMs - this.lastPoseAtMs <= 250) {
+        this.missingFrames = 1;
+        this.logger.noPose(nowMs, this.prevConfirmed);
+        return { raised: this.prevConfirmed, rawRaised: false, score: 0,
+          side: null, paddleScore: 0, poseAssist: 0 };
+      }
       this.debouncer.update(false);
       this.prevConfirmed = false;
       this.confirmStreakStartMs = 0;
       this.smoothed = null;
+      this.lastPoseAtMs = 0;
+      this.missingFrames = 0;
+      this.logger.noPose(nowMs, false);
       return { raised: false, rawRaised: false, score: 0, side: null, paddleScore: 0, poseAssist: 0 };
     }
+
+    this.lastPoseAtMs = nowMs;
+    this.missingFrames = 0;
 
     const pose =
       this.smoothAlpha > 0
@@ -185,19 +219,36 @@ export class SeatRaiseTracker {
     let paddleScore = 0;
     let poseAssist = 0;
 
+    const poseOpts: HandRaiseOptions = {
+      ...this.raiseOptions,
+      classroom: true,
+      otherLandmarks: frameCtx.otherLandmarks ?? [],
+    };
+    const diagnosis = isRaiseDetectLogEnabled()
+      ? diagnoseHandRaise(pose, poseOpts)
+      : undefined;
+
     if (this.requirePaddle) {
       const ev = evaluatePaddleRaise(pose, frameCtx.frame, this.paddleColor, this.paddleOptions);
+      const poseEv = this.requirePoseForPaddle || this.allowPoseFallback
+        ? evaluateHandRaise(pose, poseOpts) : null;
       paddleScore = ev.paddleScore;
       poseAssist = ev.poseAssist;
       score = ev.score;
       side = ev.side;
-      rawRaised = ev.raised && ev.score >= this.scoreThreshold;
+      rawRaised = ev.raised && ev.score >= this.scoreThreshold &&
+        (!this.requirePoseForPaddle || !!poseEv?.raised);
+      // Bare hand / unread frame: paddle path stays dark; Pose clear-raise still counts.
+      if (!rawRaised && this.allowPoseFallback) {
+        if (poseEv?.raised && poseEv.score >= this.scoreThreshold) {
+          rawRaised = true;
+          score = poseEv.score;
+          side = poseEv.side;
+          poseAssist = Math.max(poseAssist, poseEv.score);
+        }
+      }
     } else {
-      const ev = evaluateHandRaise(pose, {
-        ...this.raiseOptions,
-        classroom: true,
-        otherLandmarks: frameCtx.otherLandmarks ?? [],
-      });
+      const ev = evaluateHandRaise(pose, poseOpts);
       score = ev.score;
       side = ev.side;
       rawRaised = ev.raised && ev.score >= this.scoreThreshold;
@@ -217,6 +268,16 @@ export class SeatRaiseTracker {
     }
 
     this.prevConfirmed = raised;
+    this.logger.observe({
+      nowMs,
+      rawRaised,
+      raised,
+      score,
+      side,
+      paddleScore,
+      poseAssist,
+      diagnosis,
+    });
     return { raised, rawRaised, score, side, paddleScore, poseAssist, edgeAtMs };
   }
 }

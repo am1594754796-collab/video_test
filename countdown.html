@@ -22,7 +22,6 @@
     button.secondary { background: #d9e4ed; color: #172b38; }
     button:disabled { opacity: .45; cursor: not-allowed; }
     #message { min-height: 1.5em; margin: 22px 0 0; color: #c5d5e3; font-size: 1.2rem; }
-    #url-hint { margin: 14px 0 0; color: #8aa0b3; font-size: 0.95rem; word-break: break-all; }
     @media (max-width: 500px) { input { width: 112px; } button { min-width: 105px; } }
   </style>
 </head>
@@ -41,7 +40,6 @@
         <button id="reset" class="secondary">重置</button>
       </div>
       <p id="message" role="status">设置时长后点击开始</p>
-      <p id="url-hint"></p>
     </div>
   </main>
   <script>
@@ -49,7 +47,6 @@
     const secondsInput = document.getElementById('seconds');
     const display = document.getElementById('display');
     const message = document.getElementById('message');
-    const urlHint = document.getElementById('url-hint');
     const startButton = document.getElementById('start');
     const pauseButton = document.getElementById('pause');
     const resetButton = document.getElementById('reset');
@@ -59,12 +56,6 @@
     let lastAnnounced = null;
     let audioContext = null;
     let alarmTimer = null;
-
-    urlHint.textContent = location.hostname.includes('jsdelivr') || location.hostname.includes('githack') || location.hostname.includes('github.io')
-      ? '永久公开页：任意电脑打开即可，无需你的电脑开机'
-      : (location.protocol === 'file:'
-        ? '本机调试可用 start-countdown.bat；要永久外网链接请用仓库公开页'
-        : `当前页：${location.href.split('#')[0]}（独立倒计时）`);
 
     function configuredMs() {
       const minutes = Number(minutesInput.value);

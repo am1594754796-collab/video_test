@@ -8,6 +8,7 @@ from speech_answer.paths import (
     resolve_answers_path,
     to_relative_display,
 )
+from speech_answer import paths
 
 
 def test_resolve_relative_under_python_root():
@@ -28,3 +29,10 @@ def test_to_relative_display_roundtrip():
 def test_empty_path_rejected():
     with pytest.raises(ValueError):
         resolve_answers_path("   ")
+
+
+def test_configured_path_skips_comment_lines(tmp_path, monkeypatch):
+    config = tmp_path / "answers.path"
+    config.write_text("# chosen bank\ndata/banks/dividend_insurance/answers.json\n", encoding="utf-8")
+    monkeypatch.setattr(paths, "ANSWERS_PATH_CONFIG", config)
+    assert paths.read_configured_relative_path() == "data/banks/dividend_insurance/answers.json"

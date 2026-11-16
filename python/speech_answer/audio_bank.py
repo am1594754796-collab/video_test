@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 RAISE_COUNTDOWN_ID = "raise-countdown"
-RAISE_COUNTDOWN_TEXT = "举手倒计时，三，二，一"
+RAISE_COUNTDOWN_TEXT = "举手倒计时，五，四，三，二，一"
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 

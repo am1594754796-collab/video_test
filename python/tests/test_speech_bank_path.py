@@ -15,8 +15,8 @@ def test_speech_bank_default_relative():
     res = client.get("/api/speech/bank")
     assert res.status_code == 200
     body = res.json()
-    assert body["relative_path"].replace("\\", "/").endswith("data/answers.json")
-    assert any(q["id"] == "Q1" for q in body["questions"])
+    assert body["relative_path"].replace("\\", "/").endswith("data/banks/dividend_insurance/answers.json")
+    assert any(q["id"] == "Q01" for q in body["questions"])
 
 
 def test_speech_set_bank_relative_sample():
@@ -29,6 +29,19 @@ def test_speech_set_bank_relative_sample():
     body = res.json()
     assert "answers.sample.json" in body["relative_path"].replace("\\", "/")
     assert len(body["questions"]) >= 1
+
+
+def test_dividend_insurance_bank_is_available():
+    res = client.post(
+        "/api/speech/bank",
+        json={"path": "data/banks/dividend_insurance/answers.json", "persist": False},
+    )
+    assert res.status_code == 200
+    questions = res.json()["questions"]
+    assert len(questions) == 13
+    assert [q["id"] for q in questions] == [f"Q{i:02d}" for i in range(1, 14)]
+    assert [q["answer"] for q in questions] == list("BCDBAB CABCABC".replace(" ", ""))
+    assert all(set(q["options"]) == set("ABCD") for q in questions)
 
 
 def test_speech_set_bank_missing():

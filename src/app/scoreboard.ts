@@ -1,33 +1,39 @@
 /**
  * Scoreboard display only — listens to cross-tab classroom bus.
- * Vision (people-fast) and speech (speech-online) stay on their own pages.
+ * Classroom flow publishes scores to this separate display page.
  */
 
-import {
-  publishClassroomEvent,
-  subscribeClassroomEvents,
-  type ClassroomEvent,
-} from "./classroomBus";
+import { publishClassroomEvent, subscribeClassroomEvents, type ClassroomEvent } from "./classroomBus";
 
 const boardEl = document.querySelector<HTMLElement>("#score-board")!;
-const statusEl = document.querySelector<HTMLElement>("#status")!;
-const busStatusEl = document.querySelector<HTMLElement>("#bus-status")!;
-const btnClear = document.querySelector<HTMLButtonElement>("#btn-clear-scores")!;
 
 const SEATS = [1, 2, 3, 4, 5, 6] as const;
 /** Seat index → points. */
 const scores = new Map<number, number>();
+const names = new Map<number, string>();
 /** Winner flashes through answer judging and the five-second score display. */
 let flashingIndex: number | null = null;
+const localDisplay = location.port === "5173";
+let lastPublicState = "";
+let pendingSync = Promise.resolve();
+let namesReady = !localDisplay;
+let namesTouched = false;
 
-function setStatus(text: string): void {
-  statusEl.textContent = text;
-}
-
-function setBusStatus(text: string, ok = true): void {
-  busStatusEl.textContent = text;
-  busStatusEl.classList.toggle("ok", ok);
-  busStatusEl.classList.toggle("bad", !ok);
+function syncScores(): void {
+  if (!localDisplay || !namesReady) return;
+  const payload = {
+    scores: Object.fromEntries(SEATS.map((index) => [String(index), scores.get(index) ?? 0])),
+    names: Object.fromEntries(SEATS.map((index) => [String(index), names.get(index) ?? ""])),
+    flashing: flashingIndex,
+  };
+  pendingSync = pendingSync.then(async () => {
+    const response = await fetch("/api/classroom-scores", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  }).catch((error) => console.error("计分板同步失败", error));
 }
 
 function renderScoreBoard(): void {
@@ -35,20 +41,34 @@ function renderScoreBoard(): void {
   for (const index of SEATS) {
     const card = document.createElement("article");
     card.className = "seat" + (flashingIndex === index ? " flashing" : "");
-    card.innerHTML = `
-      <div class="num">#${index}</div>
-      ${flashingIndex === index ? '<div class="winner-label">抢答成功</div>' : ''}
-      <div class="score">积分 <strong>${scores.get(index) ?? 0}</strong></div>
-    `;
+    const identity = document.createElement("div");
+    identity.className = "identity";
+    const number = document.createElement("span");
+    number.className = "num";
+    number.textContent = `#${index}`;
+    identity.append(number);
+    const name = names.get(index);
+    if (name) {
+      const personName = document.createElement("span");
+      personName.className = "person-name";
+      personName.textContent = name;
+      identity.append(personName);
+    }
+    const score = document.createElement("div");
+    score.className = "score";
+    const value = document.createElement("strong");
+    value.textContent = String(scores.get(index) ?? 0);
+    value.dataset.digits = String(value.textContent.length);
+    score.append(value);
+    card.append(identity, score);
     boardEl.appendChild(card);
   }
+  syncScores();
 }
 
-function onNumberingLocked(nextSeats: number[]): void {
+function onNumberingLocked(): void {
   flashingIndex = null;
   renderScoreBoard();
-  setBusStatus(`已锁定参与者：${nextSeats.map((n) => `#${n}`).join(" ")}`);
-  setStatus("编号已锁定 · 等待视觉页「最先举手」");
 }
 
 function ensureSeat(personIndex: number): void {
@@ -60,17 +80,12 @@ function onFirstRaise(personIndex: number): void {
   ensureSeat(personIndex);
   flashingIndex = personIndex;
   renderScoreBoard();
-  setStatus(`#${personIndex} 最先举手 · 持续闪烁 · 请在语音页作答`);
-  setBusStatus(`抢答中：#${personIndex}`);
 }
 
 function onEarlyRaise(personIndex: number): void {
+  // Points come from classroom scores-snapshot; only ensure the seat exists.
   ensureSeat(personIndex);
-  const next = Math.max(0, (scores.get(personIndex) ?? 0) - 1);
-  scores.set(personIndex, next);
   renderScoreBoard();
-  setStatus(`#${personIndex} 提前举手 · 扣 1 分 → ${next}`);
-  setBusStatus(`提前举手：#${personIndex} -1`);
 }
 
 function onAnswerResult(opts: {
@@ -80,23 +95,12 @@ function onAnswerResult(opts: {
   transcript?: string;
 }): void {
   const idx = opts.personIndex ?? flashingIndex;
-  if (idx == null) {
-    setStatus("收到判题信号，但没有抢答座位（请先举手）");
-    return;
-  }
+  if (idx == null) return;
   ensureSeat(idx);
   const delta = opts.passed ? 1 : -1;
   const next = Math.max(0, (scores.get(idx) ?? 0) + delta);
   scores.set(idx, next);
   renderScoreBoard();
-  const tip = opts.transcript
-    ? ` ·「${opts.transcript}」`
-    : opts.letter
-      ? ` · 选 ${opts.letter}`
-      : "";
-  const verdict = opts.passed ? "答对 +1" : "答错 −1";
-  setStatus(`#${idx} ${verdict} → ${next} · 展示 5 秒后进入下一题${tip}`);
-  setBusStatus(`上一题：#${idx} ${opts.passed ? "+1" : "-1"}`);
 }
 
 function onAnswerPassed(transcript?: string): void {
@@ -107,15 +111,12 @@ function onRaceReset(): void {
   if (flashingIndex != null) {
     flashingIndex = null;
     renderScoreBoard();
-    setStatus("视觉页已重置本轮 · 闪烁已清除 · 等待再次举手");
   }
 }
 
 function onNumberingCleared(): void {
   flashingIndex = null;
   renderScoreBoard();
-  setBusStatus("编号已清除 · 等待视觉页重新锁定", false);
-  setStatus("视觉页解除编号 · 等待重新锁定");
 }
 
 function onScoresSnapshot(next: Record<string, number>): void {
@@ -124,13 +125,18 @@ function onScoresSnapshot(next: Record<string, number>): void {
     scores.set(index, typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0);
   }
   renderScoreBoard();
-  setBusStatus("已同步抢答页分数");
+}
+
+function onAdminSet(nextScores: Record<string, number>, nextNames: Record<string, string>): void {
+  namesTouched = true;
+  for (const index of SEATS) names.set(index, nextNames[String(index)]?.trim() ?? "");
+  onScoresSnapshot(nextScores);
 }
 
 function handleEvent(event: ClassroomEvent): void {
   switch (event.type) {
     case "numbering-locked":
-      onNumberingLocked(event.seats);
+      onNumberingLocked();
       break;
     case "numbering-cleared":
       onNumberingCleared();
@@ -159,26 +165,52 @@ function handleEvent(event: ClassroomEvent): void {
       for (const i of scores.keys()) scores.set(i, 0);
       flashingIndex = null;
       renderScoreBoard();
-      setStatus("积分已清空");
       break;
     case "scores-snapshot":
       onScoresSnapshot(event.scores);
+      break;
+    case "scores-admin-set":
+      onAdminSet(event.scores, event.names);
       break;
     default:
       break;
   }
 }
 
-btnClear.addEventListener("click", () => {
-  publishClassroomEvent({ type: "scores-clear", source: "scoreboard" });
-  for (const i of scores.keys()) scores.set(i, 0);
-  flashingIndex = null;
+if (localDisplay) {
+  subscribeClassroomEvents(handleEvent);
   renderScoreBoard();
-  setStatus("积分已清空");
-});
-
-subscribeClassroomEvents(handleEvent);
-setBusStatus("等待抢答页同步分数", true);
-setStatus("请在另一个标签页打开教室抢答页，开始答题后分数会实时变化");
-renderScoreBoard();
-publishClassroomEvent({ type: "scores-snapshot-request", source: "scoreboard" });
+  publishClassroomEvent({ type: "scores-snapshot-request", source: "scoreboard" });
+  void fetch("/api/classroom-scores", { cache: "no-store" })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const state = await response.json() as { names?: Record<string, string> };
+      if (!namesTouched) {
+        for (const index of SEATS) names.set(index, state.names?.[String(index)]?.trim() ?? "");
+      }
+    })
+    .catch((error) => console.error("姓名读取失败", error))
+    .finally(() => {
+      namesReady = true;
+      renderScoreBoard();
+    });
+} else {
+  const refresh = async () => {
+    try {
+      const response = await fetch("/api/classroom-scores", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const state = await response.json() as { scores: Record<string, number>; names?: Record<string, string>; flashing: number | null };
+      const serialized = JSON.stringify(state);
+      if (serialized !== lastPublicState) {
+        flashingIndex = state.flashing;
+        for (const index of SEATS) names.set(index, state.names?.[String(index)]?.trim() ?? "");
+        onScoresSnapshot(state.scores);
+        lastPublicState = serialized;
+      }
+    } catch (error) {
+      console.error("公网计分板读取失败", error);
+    }
+  };
+  void refresh();
+  setInterval(refresh, 1000);
+}

@@ -2,14 +2,21 @@
  * Pull the last A–D choice from a speech transcript (zh / en letter forms).
  */
 
-const LETTER = "ABCD" as const;
-export type ChoiceLetter = (typeof LETTER)[number];
+export type ChoiceLetter = "A" | "B" | "C" | "D";
 
 const CN_TO_LETTER: Record<string, ChoiceLetter> = {
   甲: "A",
   乙: "B",
   丙: "C",
   丁: "D",
+};
+
+const SPOKEN_LETTER: Record<string, ChoiceLetter> = {
+  诶: "A", 哎: "A", 艾: "A", 诶诶: "A",
+  比: "B", 逼: "B", 哔: "B",
+  西: "C", 希: "C", 吸: "C",
+  迪: "D", 弟: "D", 滴: "D",
+  ay: "A", bee: "B", see: "C", dee: "D",
 };
 
 /** Match Latin A–D or 甲乙丙丁 as standalone option tokens. */
@@ -19,6 +26,9 @@ const TOKEN =
 export function extractLastChoiceLetter(transcript: string): ChoiceLetter | null {
   const text = transcript.trim();
   if (!text) return null;
+
+  const spoken = text.replace(/[\s，。！？,.!?]/g, "").replace(/^(?:我选|选|答案是|答案|我觉得是)/, "").toLowerCase();
+  if (spoken in SPOKEN_LETTER) return SPOKEN_LETTER[spoken]!;
 
   let last: ChoiceLetter | null = null;
   TOKEN.lastIndex = 0;

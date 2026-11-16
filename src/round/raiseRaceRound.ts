@@ -1,6 +1,9 @@
 /**
  * Raise race round: countdown / open / locked.
  * Vision only reports raise edges; this module decides early vs winner.
+ * Classroom: countdown early window = penalty; then open for first-raise.
+ * Once a seat early-raises, it stays disqualified for this round: put-down is
+ * ignored for rising-edge purposes, and a later raise cannot win.
  */
 
 export type RoundPhase = "idle" | "countdown" | "open" | "locked";
@@ -28,6 +31,8 @@ export type RaiseRaceRoundOptions = {
    * Softens detector/audio latency at the open boundary. Default 80ms.
    */
   openGraceMs?: number;
+  /** Wait briefly for other confirmed raises before choosing the earliest edge. */
+  settleMs?: number;
 };
 
 export class RaiseRaceRound {
@@ -38,9 +43,12 @@ export class RaiseRaceRound {
   private prevRaised = new Map<number, boolean>();
   private priming = true;
   private readonly openGraceMs: number;
+  private readonly settleMs: number;
+  private pending: { personIndex: number; atMs: number; score: number }[] = [];
 
   constructor(options: RaiseRaceRoundOptions = {}) {
     this.openGraceMs = options.openGraceMs ?? 80;
+    this.settleMs = options.settleMs ?? 0;
   }
 
   get phase(): RoundPhase {
@@ -59,7 +67,7 @@ export class RaiseRaceRound {
     return this.early;
   }
 
-  /** Speech starts 3-2-1 audio. */
+  /** Speech starts 3-2-1 audio. Raises until open are early penalties. */
   beginCountdown(_nowMs?: number): void {
     this.clearOutcome();
     this._phase = "countdown";
@@ -69,11 +77,12 @@ export class RaiseRaceRound {
   }
 
   /**
-   * Audio ended (or bus open signal arrived). Stamp open time in the
-   * same clock domain as capture timestamps (usually performance.now()).
+   * Open race (speech: after full countdown audio + 0.1s). If already open,
+   * keep the stamp so a duplicate signal does not push the boundary forward.
    */
   openWindow(openTimestampMs: number): void {
     if (this._phase === "locked") return;
+    if (this._phase === "open" && this._openTimestampMs != null) return;
     this._openTimestampMs = openTimestampMs;
     this._phase = "open";
   }
@@ -118,6 +127,12 @@ export class RaiseRaceRound {
     const rising: Cand[] = [];
     for (const p of people) {
       const was = this.prevRaised.get(p.personIndex) ?? false;
+      // Early seats stay "already raised" so a later put-down/re-raise is not a
+      // fresh race edge.
+      if (this.early.has(p.personIndex)) {
+        this.prevRaised.set(p.personIndex, true);
+        continue;
+      }
       if (p.raised && !was) {
         rising.push({
           personIndex: p.personIndex,
@@ -128,8 +143,6 @@ export class RaiseRaceRound {
       this.prevRaised.set(p.personIndex, p.raised);
     }
 
-    if (rising.length === 0) return [];
-
     rising.sort((a, b) => {
       if (a.atMs !== b.atMs) return a.atMs - b.atMs;
       return b.score - a.score;
@@ -139,14 +152,20 @@ export class RaiseRaceRound {
       return this.recordEarly(rising);
     }
 
-    // OPEN: split by effective open time.
+    // OPEN: split by effective open time. Early violators never become winners.
     const openAt = (this._openTimestampMs ?? captureMs) + this.openGraceMs;
     const earlyCands = rising.filter((c) => c.atMs < openAt);
-    const validCands = rising.filter((c) => c.atMs >= openAt);
     const out: RaiseRaceOutEvent[] = this.recordEarly(earlyCands);
+    const validCands = rising.filter(
+      (c) => c.atMs >= openAt && !this.early.has(c.personIndex),
+    );
 
-    if (validCands.length === 0) return out;
-    const best = validCands[0]!;
+    this.pending.push(...validCands);
+    if (this.pending.length === 0) return out;
+    const firstAt = Math.min(...this.pending.map((c) => c.atMs));
+    if (captureMs < firstAt + this.settleMs) return out;
+    this.pending.sort((a, b) => a.atMs - b.atMs || b.score - a.score || a.personIndex - b.personIndex);
+    const best = this.pending[0]!;
     this._winner = { personIndex: best.personIndex, raisedAtMs: best.atMs };
     this._phase = "locked";
     out.push({ type: "winner", personIndex: best.personIndex, atMs: best.atMs });
@@ -158,6 +177,8 @@ export class RaiseRaceRound {
     for (const c of cands) {
       if (this.early.has(c.personIndex)) continue;
       this.early.add(c.personIndex);
+      // Sticky raised: do not treat a later hand-down as a fresh race edge.
+      this.prevRaised.set(c.personIndex, true);
       out.push({ type: "early-raise", personIndex: c.personIndex, atMs: c.atMs });
     }
     return out;
@@ -166,5 +187,6 @@ export class RaiseRaceRound {
   private clearOutcome(): void {
     this._winner = null;
     this.early.clear();
+    this.pending = [];
   }
 }

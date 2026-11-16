@@ -1,5 +1,5 @@
 @echo off
-rem Ensure local MediaPipe WASM + pose models for vision pages.
+rem Ensure local MediaPipe WASM + full pose model for the classroom page.
 setlocal EnableExtensions
 cd /d "%~dp0"
 
@@ -7,13 +7,10 @@ set "WASM_SRC=node_modules\@mediapipe\tasks-vision\wasm"
 set "WASM_DST=public\mediapipe\wasm"
 set "MODEL_DIR=public\mediapipe\models"
 set "FULL=%MODEL_DIR%\pose_landmarker_full.task"
-set "LITE=%MODEL_DIR%\pose_landmarker_lite.task"
 rem Prefer mirrors reachable in CN; Google Storage is often blocked/slow.
 set "FULL_URL1=https://hf-mirror.com/spaces/pollen-robotics/red_light_green_light/resolve/main/red_light_green_light/pose_landmarker_full.task"
 set "FULL_URL2=https://huggingface.co/spaces/pollen-robotics/red_light_green_light/resolve/main/red_light_green_light/pose_landmarker_full.task"
 set "FULL_URL3=https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
-set "LITE_URL1=https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
-set "LITE_URL2=https://cdn.jsdelivr.net/gh/google-ai-edge/mediapipe-samples@master/examples/pose_landmarker/js/pose_landmarker_lite.task"
 rem Full model is ~9MB; reject tiny/corrupt leftovers from failed downloads.
 set "MIN_BYTES=1000000"
 
@@ -48,12 +45,6 @@ mkdir "%MODEL_DIR%" 2>nul
 
 call :ensure_model "%FULL%" "full" "%FULL_URL1%" "%FULL_URL2%" "%FULL_URL3%"
 if errorlevel 1 exit /b 1
-
-rem Lite is optional for people-fast (uses full). Best-effort download.
-call :ensure_model "%LITE%" "lite" "%LITE_URL1%" "%LITE_URL2%"
-if errorlevel 1 (
-  echo [WARN] lite model missing - index.html single-person debug may need it later.
-)
 
 echo [mediapipe] Ready.
 exit /b 0

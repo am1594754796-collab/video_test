@@ -27,6 +27,18 @@ def test_speech_text_falls_back_to_question_id():
     assert build_question_speech_text(question) == "题目 Q8"
 
 
+def test_speech_text_expands_circled_numbers_for_voice():
+    question = QuestionRecord(
+        id="Q01", answer="B", prompt="①年金 ②养老年金",
+        options={"A": "②③④", "B": "①②③"},
+    )
+    text = build_question_speech_text(question)
+    assert "第一项，年金" in text
+    assert "选项A，第二项、第三项、第四项" in text
+    assert "选项B，第一项、第二项、第三项" in text
+    assert "①" not in text and "②" not in text
+
+
 def test_defaults_are_cosyvoice_v2(monkeypatch):
     monkeypatch.delenv("TTS_MODEL", raising=False)
     monkeypatch.delenv("TTS_VOICE", raising=False)

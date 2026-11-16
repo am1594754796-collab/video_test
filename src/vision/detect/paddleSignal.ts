@@ -1,5 +1,5 @@
 /**
- * Colored raise-paddle detection + fusion with a weak pose assist.
+ * Raise-paddle detection near each wrist + fusion with a weak pose assist.
  *
  * Color is the primary signal (high threshold). Pose only needs a mild
  * wrist-above / near-shoulder lift; a very strong paddle can pass with
@@ -55,8 +55,8 @@ const DEFAULTS = {
   minPaddleScore: 0.38,
   strongPaddleScore: 0.62,
   minPoseAssist: 0.22,
-  colorWeight: 0.8,
-  poseWeight: 0.2,
+  colorWeight: 0.1,
+  poseWeight: 0.9,
 } as const;
 
 function clamp01(n: number): number {
@@ -128,6 +128,25 @@ export function paddleSearchRoi(landmarks: readonly PoseLandmark[]): NormRect {
   };
 }
 
+/** Search only beside one visible wrist, not across the person's shirt or neighbor. */
+export function wristPaddleRoi(
+  landmarks: readonly PoseLandmark[],
+  side: "left" | "right",
+): NormRect | null {
+  const wrist = landmarks[side === "left" ? POSE.LEFT_WRIST : POSE.RIGHT_WRIST];
+  const shoulder = landmarks[side === "left" ? POSE.LEFT_SHOULDER : POSE.RIGHT_SHOULDER];
+  if (!wrist || !shoulder || (wrist.visibility ?? 1) < 0.15) return null;
+  // A card is held above or beside the hand; this box follows that hand.
+  const width = 0.22;
+  const height = 0.20;
+  return {
+    x0: clamp01(wrist.x - width / 2),
+    x1: clamp01(wrist.x + width / 2),
+    y0: clamp01(wrist.y - height * 0.8),
+    y1: clamp01(wrist.y + height * 0.2),
+  };
+}
+
 /**
  * Best local match density for `color` inside ROI (0–1).
  * Uses a sliding window so a small raised card is not diluted by the whole torso box.
@@ -137,6 +156,7 @@ export function scorePaddleColor(
   color: PaddleColor,
   roi: NormRect,
   sampleStep = 1,
+  minWhiteChannel = 0,
 ): number {
   const { data, width, height } = frame;
   if (width <= 0 || height <= 0) return 0;
@@ -150,8 +170,8 @@ export function scorePaddleColor(
   if (rw <= 0 || rh <= 0) return 0;
 
   const step = Math.max(1, sampleStep);
-  const winW = Math.max(4, Math.round(Math.min(rw, Math.max(6, width * 0.12))));
-  const winH = Math.max(4, Math.round(Math.min(rh, Math.max(6, height * 0.14))));
+  const winW = Math.max(4, Math.round(Math.min(rw, Math.max(6, width * 0.06))));
+  const winH = Math.max(4, Math.round(Math.min(rh, Math.max(6, height * 0.08))));
   const strideX = Math.max(1, Math.floor(winW / 2));
   const strideY = Math.max(1, Math.floor(winH / 2));
 
@@ -167,7 +187,8 @@ export function scorePaddleColor(
           const g = data[o + 1] ?? 0;
           const b = data[o + 2] ?? 0;
           total += 1;
-          if (pixelMatchesPaddleColor(r, g, b, color)) hit += 1;
+          if (pixelMatchesPaddleColor(r, g, b, color) &&
+            (color !== "white" || Math.min(r, g, b) >= minWhiteChannel)) hit += 1;
         }
       }
       if (total > 0) best = Math.max(best, hit / total);
@@ -183,7 +204,8 @@ export function scorePaddleColor(
       for (let x = x0; x < x1; x += step) {
         const o = (y * width + x) * 4;
         total += 1;
-        if (pixelMatchesPaddleColor(data[o] ?? 0, data[o + 1] ?? 0, data[o + 2] ?? 0, color)) {
+        if (pixelMatchesPaddleColor(data[o] ?? 0, data[o + 1] ?? 0, data[o + 2] ?? 0, color) &&
+          (color !== "white" || Math.min(data[o] ?? 0, data[o + 1] ?? 0, data[o + 2] ?? 0) >= minWhiteChannel)) {
           hit += 1;
         }
       }
@@ -193,39 +215,62 @@ export function scorePaddleColor(
   return best;
 }
 
+/** Mean white-channel level beside the wrist box, excluding the box itself. */
+function surroundingWhiteLevel(
+  frame: FramePixels,
+  roi: NormRect,
+): number {
+  const { data, width, height } = frame;
+  const cx = (roi.x0 + roi.x1) / 2;
+  const cy = (roi.y0 + roi.y1) / 2;
+  const halfW = (roi.x1 - roi.x0) * 0.9;
+  const halfH = (roi.y1 - roi.y0) * 0.9;
+  const x0 = Math.max(0, Math.floor((cx - halfW) * width));
+  const x1 = Math.min(width, Math.ceil((cx + halfW) * width));
+  const y0 = Math.max(0, Math.floor((cy - halfH) * height));
+  const y1 = Math.min(height, Math.ceil((cy + halfH) * height));
+  let sum = 0;
+  let total = 0;
+  const step = Math.max(1, Math.round(Math.min(width, height) / 180));
+  for (let y = y0; y < y1; y += step) {
+    for (let x = x0; x < x1; x += step) {
+      const nx = x / width;
+      const ny = y / height;
+      if (nx >= roi.x0 && nx <= roi.x1 && ny >= roi.y0 && ny <= roi.y1) continue;
+      const o = (y * width + x) * 4;
+      total++;
+      sum += Math.min(data[o] ?? 0, data[o + 1] ?? 0, data[o + 2] ?? 0);
+    }
+  }
+  return total ? sum / total : 0;
+}
+
 /**
  * Weak pose assist: clear raise scores high; wrist near/above shoulder still helps.
  */
+function poseAssistForSide(landmarks: readonly PoseLandmark[], side: "left" | "right"): number {
+  const nose = landmarks[POSE.NOSE];
+  const shoulder = landmarks[side === "left" ? POSE.LEFT_SHOULDER : POSE.RIGHT_SHOULDER];
+  const wrist = landmarks[side === "left" ? POSE.LEFT_WRIST : POSE.RIGHT_WRIST];
+  if (!shoulder || !wrist) return 0;
+  if ((wrist.visibility ?? 1) < 0.12 || (shoulder.visibility ?? 1) < 0.12) return 0;
+  const clearance = shoulder.y - wrist.y;
+  const nearHead =
+    nose && wrist.y <= nose.y + 0.1 && Math.abs(wrist.x - nose.x) <= 0.18 ? 0.25 : 0;
+  if (clearance >= 0.04) return clamp01(0.55 + clearance * 3 + nearHead);
+  if (clearance >= 0) return clamp01(0.28 + clearance * 4 + nearHead * 0.5);
+  if (clearance >= -0.06) return clamp01(0.12 + (clearance + 0.06) * 2);
+  return 0;
+}
+
 export function weakPoseAssist(landmarks: readonly PoseLandmark[]): {
   assist: number;
   side: "left" | "right" | null;
 } {
-  const nose = landmarks[POSE.NOSE];
-  const sides: Array<"left" | "right"> = ["left", "right"];
-  let best = 0;
-  let bestSide: "left" | "right" | null = null;
-
-  for (const side of sides) {
-    const shoulder = landmarks[side === "left" ? POSE.LEFT_SHOULDER : POSE.RIGHT_SHOULDER];
-    const wrist = landmarks[side === "left" ? POSE.LEFT_WRIST : POSE.RIGHT_WRIST];
-    if (!shoulder || !wrist) continue;
-    if ((wrist.visibility ?? 1) < 0.12 || (shoulder.visibility ?? 1) < 0.12) continue;
-
-    const clearance = shoulder.y - wrist.y; // positive when wrist above shoulder
-    const nearHead =
-      nose && wrist.y <= nose.y + 0.1 && Math.abs(wrist.x - nose.x) <= 0.18 ? 0.25 : 0;
-    let assist = 0;
-    if (clearance >= 0.04) assist = clamp01(0.55 + clearance * 3 + nearHead);
-    else if (clearance >= 0.0) assist = clamp01(0.28 + clearance * 4 + nearHead * 0.5);
-    else if (clearance >= -0.06) assist = clamp01(0.12 + (clearance + 0.06) * 2);
-    else assist = 0;
-
-    if (assist > best) {
-      best = assist;
-      bestSide = side;
-    }
-  }
-  return { assist: best, side: bestSide };
+  const left = poseAssistForSide(landmarks, "left");
+  const right = poseAssistForSide(landmarks, "right");
+  if (left === 0 && right === 0) return { assist: 0, side: null };
+  return left >= right ? { assist: left, side: "left" } : { assist: right, side: "right" };
 }
 
 export function evaluatePaddleRaise(
@@ -251,20 +296,30 @@ export function evaluatePaddleRaise(
     };
   }
 
-  const roi = paddleSearchRoi(landmarks);
-  const paddleScore = scorePaddleColor(frame, color, roi);
-  const fused = colorW * paddleScore + poseW * pose.assist;
-
-  const colorOk = paddleScore >= minPaddle;
-  const poseOk =
-    pose.assist >= minPose || (paddleScore >= strongPaddle && pose.assist >= 0.1);
-  const raised = colorOk && poseOk;
-
-  return {
-    raised,
-    score: raised ? Math.max(0.02, fused) : fused,
-    side: pose.side,
-    paddleScore,
-    poseAssist: pose.assist,
+  let best: PaddleRaiseEval = {
+    raised: false, score: 0, side: null, paddleScore: 0, poseAssist: 0,
   };
+  for (const side of ["left", "right"] as const) {
+    const roi = wristPaddleRoi(landmarks, side);
+    if (!roi) continue;
+    const assist = poseAssistForSide(landmarks, side);
+    if (assist < 0.1) continue;
+    const minWhiteChannel = color === "white"
+      ? Math.max(160, surroundingWhiteLevel(frame, roi) + 18)
+      : 0;
+    const paddleScore = scorePaddleColor(frame, color, roi, 1, minWhiteChannel);
+    const raised = paddleScore >= minPaddle &&
+      (assist >= minPose || (paddleScore >= strongPaddle && assist >= 0.1));
+    const score = colorW * paddleScore + poseW * assist;
+    if ((raised && !best.raised) || (raised === best.raised && score > best.score)) {
+      best = {
+        raised,
+        score: raised ? Math.max(0.02, score) : score,
+        side,
+        paddleScore,
+        poseAssist: assist,
+      };
+    }
+  }
+  return best;
 }

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>举手识别 · 人脸定位版</title>
+    <link rel="stylesheet" href="/src/app/vision.css" />
+  </head>
+  <body>
+    <main class="vision-app">
+      <header class="vision-header">
+        <div>
+          <h1>举手识别 · 人脸定位版</h1>
+          <p class="sub">人脸定位并编号 · 举手由肩、肘、腕的肢体姿态判定</p>
+        </div>
+        <div class="vision-controls">
+          <label class="field">参与人数
+            <input id="expected-count" type="number" min="1" max="6" value="6" />
+          </label>
+          <button type="button" id="btn-restart">重新检测并排序</button>
+        </div>
+      </header>
+      <p id="status" class="status" role="status">正在启动相机与检测…</p>
+      <p id="race-status" class="race-status" aria-live="polite">等待课堂页读题倒计时</p>
+      <section class="stage" aria-label="相机与检测画面">
+        <video id="camera" class="camera" playsinline muted aria-hidden="true"></video>
+        <canvas id="hud" class="hud" aria-label="检测叠加层"></canvas>
+      </section>
+      <ul id="seat-list" class="seat-list" aria-live="polite"></ul>
+    </main>
+    <script type="module" src="/src/app/visionPage.ts"></script>
+  </body>
+</html>

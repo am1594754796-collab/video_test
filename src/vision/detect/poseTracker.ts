@@ -1,5 +1,6 @@
 /**
  * Lightweight multi-pose tracker: stabilize IDs across frames to reduce flicker.
+ * Fast path for classroom scout: brief miss holds + sticky display numbers.
  */
 
 import { torsoCenter, type PoseLike } from "./dedupePoses";
@@ -23,6 +24,16 @@ export type PoseTrackerOptions = {
   matchYWeight?: number;
   maxMissed?: number;
   minFrames?: number;
+  /**
+   * New tracks must be seen this many frames before they affect numbering.
+   * Cuts one-frame false people that would reshuffle 1–N.
+   */
+  minSeen?: number;
+  /**
+   * When true (default), keep displayIndex for the same track-id set instead of
+   * re-sorting every frame. Reassign left→right only when tracks enter/leave.
+   */
+  stickyDisplay?: boolean;
 };
 
 type InternalTrack = {
@@ -30,6 +41,7 @@ type InternalTrack = {
   center: { x: number; y: number };
   landmarks: readonly PoseLandmark[];
   missed: number;
+  seen: number;
   debouncer: RaiseDebouncer;
 };
 
@@ -47,14 +59,20 @@ export class PoseTracker {
   private readonly matchDistance: number;
   private readonly matchYWeight: number;
   private readonly maxMissed: number;
+  private readonly minSeen: number;
+  private readonly stickyDisplay: boolean;
   private minFrames: number;
   private nextId = 1;
   private tracks: InternalTrack[] = [];
+  private displayByTrack = new Map<number, number>();
+  private lastActiveKey = "";
 
   constructor(options: PoseTrackerOptions = {}) {
     this.matchDistance = options.matchDistance ?? 0.18;
     this.matchYWeight = options.matchYWeight ?? 1;
     this.maxMissed = options.maxMissed ?? 10;
+    this.minSeen = Math.max(1, options.minSeen ?? 1);
+    this.stickyDisplay = options.stickyDisplay ?? true;
     this.minFrames = options.minFrames ?? 4;
   }
 
@@ -65,6 +83,8 @@ export class PoseTracker {
   reset(): void {
     this.tracks = [];
     this.nextId = 1;
+    this.displayByTrack.clear();
+    this.lastActiveKey = "";
   }
 
   update(poses: readonly PoseLike[]): TrackedPose[] {
@@ -84,7 +104,7 @@ export class PoseTracker {
         pairs.push({
           ti,
           di,
-          d: dist(this.tracks[ti].center, detections[di].center, this.matchYWeight),
+          d: dist(this.tracks[ti]!.center, detections[di]!.center, this.matchYWeight),
         });
       }
     }
@@ -93,42 +113,52 @@ export class PoseTracker {
     for (const { ti, di, d } of pairs) {
       if (usedTrack.has(ti) || usedDet.has(di)) continue;
       if (d > this.matchDistance) continue;
-      const track = this.tracks[ti];
-      const det = detections[di];
+      const track = this.tracks[ti]!;
+      const det = detections[di]!;
       track.center = det.center;
       track.landmarks = det.landmarks;
       track.missed = 0;
+      track.seen += 1;
       usedTrack.add(ti);
       usedDet.add(di);
     }
 
     for (let ti = 0; ti < this.tracks.length; ti++) {
-      if (!usedTrack.has(ti)) this.tracks[ti].missed += 1;
+      if (!usedTrack.has(ti)) this.tracks[ti]!.missed += 1;
     }
 
     for (let di = 0; di < detections.length; di++) {
       if (usedDet.has(di)) continue;
-      const det = detections[di];
+      const det = detections[di]!;
       this.tracks.push({
         id: this.nextId++,
         center: det.center,
         landmarks: det.landmarks,
         missed: 0,
+        seen: 1,
         debouncer: new RaiseDebouncer({ minFrames: this.minFrames }),
       });
     }
 
     this.tracks = this.tracks.filter((t) => t.missed <= this.maxMissed);
 
-    return [...this.tracks]
-      .sort((a, b) => a.center.x - b.center.x)
-      .map((t, i) => ({
-        trackId: t.id,
-        displayIndex: i + 1,
-        landmarks: t.landmarks,
-        center: t.center,
-        debouncer: t.debouncer,
-        fresh: t.missed === 0,
-      }));
+    const active = this.tracks.filter((t) => t.seen >= this.minSeen);
+    const ordered = [...active].sort((a, b) => a.center.x - b.center.x || a.id - b.id);
+    const activeKey = ordered.map((t) => t.id).join(",");
+
+    if (!this.stickyDisplay || activeKey !== this.lastActiveKey) {
+      this.displayByTrack.clear();
+      ordered.forEach((t, i) => this.displayByTrack.set(t.id, i + 1));
+      this.lastActiveKey = activeKey;
+    }
+
+    return ordered.map((t) => ({
+      trackId: t.id,
+      displayIndex: this.displayByTrack.get(t.id) ?? 0,
+      landmarks: t.landmarks,
+      center: t.center,
+      debouncer: t.debouncer,
+      fresh: t.missed === 0,
+    }));
   }
 }
