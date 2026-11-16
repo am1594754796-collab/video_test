@@ -1,3 +1,4 @@
+import { boardPaths, getBoard } from "./boards.js";
 import { SLOT_COUNT } from "./constants.js";
 import { escapeHtml } from "./validate.js";
 
@@ -90,7 +91,8 @@ ${lookupBlock}
 </html>`;
 }
 
-export function ratePage({ slots, scoredSlots = [], error = null, notice = null }) {
+export function ratePage({ slots, scoredSlots = [], title = "扫码评分", error = null, notice = null }) {
+  const pageTitle = escapeHtml(title || "扫码评分");
   const labelOf = (slot) => escapeHtml(slot.name || `${slot.slot}号`);
   const scored = new Set((scoredSlots || []).map(Number));
   const rows = slots
@@ -127,12 +129,11 @@ export function ratePage({ slots, scoredSlots = [], error = null, notice = null 
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>扫码评分</title>
+<title>${pageTitle}</title>
 <style>
   body { font-family: sans-serif; text-align: center; padding: 20px 12px 40px; color: #17212b; background: #f5f8fc; }
   main { max-width: 440px; margin: 0 auto; }
-  h1 { margin: 0 0 8px; }
-  .tip { color: #5a6f86; margin: 0 0 16px; }
+  h1 { margin: 0 0 16px; }
   .notice { color: #0f7a5a; font-weight: 700; margin: 0 0 12px; }
   .error { color: #b42318; font-weight: 700; margin: 0 0 12px; }
   .list { display: grid; gap: 12px; }
@@ -163,8 +164,7 @@ export function ratePage({ slots, scoredSlots = [], error = null, notice = null 
 </head>
 <body>
 <main>
-  <h1>扫码评分</h1>
-  <p class="tip">上下共 ${slots.length} 人，每人单独打分提交；同一编号只能提交一次</p>
+  <h1>${pageTitle}</h1>
   ${notice ? `<p class="notice" id="rate-notice">${escapeHtml(notice)}</p>` : `<p class="notice" id="rate-notice" hidden></p>`}
   ${error ? `<p class="error" id="rate-error">${escapeHtml(error)}</p>` : `<p class="error" id="rate-error" hidden></p>`}
   <section class="list" id="person-list">${rows}</section>
@@ -185,18 +185,31 @@ export function alreadyPage(name) {
 <body style="font-family:sans-serif;text-align:center;padding:48px 16px"><h1>您已给 ${escapeHtml(name)} 提交过评分</h1></body></html>`;
 }
 
-export function allDonePage(name = null) {
+export function allDonePage(name = null, slotCount = 6) {
   const title = name ? `已给 ${escapeHtml(name)} 打分` : "全部评完";
   const body = name
     ? `<h1>${title}</h1><p>感谢参与</p>`
-    : `<h1>六人已全部评完</h1><p>感谢参与，每人只能评一次</p>`;
+    : `<h1>${slotCount} 人已全部评完</h1><p>感谢参与，每人只能评一次</p>`;
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>完成</title>
 <style>body{font-family:sans-serif;text-align:center;padding:48px 16px;color:#17212b;background:#f5f8fc}h1{margin-bottom:12px}</style></head>
 <body>${body}</body></html>`;
 }
 
-export function livePage({ cleared = false, saved = false, slots = [], error = null }) {
-  const fallbackSlots = Array.from({ length: SLOT_COUNT }, (_, i) => ({ slot: i + 1, name: `${i + 1}号` }));
+export function livePage({
+  boardId = "main",
+  cleared = false,
+  saved = false,
+  slots = [],
+  rateTitle = null,
+  error = null,
+}) {
+  const board = getBoard(boardId);
+  const paths = boardPaths(board);
+  const title = rateTitle || board.defaultTitle;
+  const other = boardId === "case" ? getBoard("main") : getBoard("case");
+  const otherPaths = boardPaths(other);
+  const fallbackSlots = Array.from({ length: board.slotCount }, (_, i) => ({ slot: i + 1, name: `${i + 1}号` }));
+  const cols = board.slotCount <= 3 ? board.slotCount : 3;
   const nameFields = (slots.length ? slots : fallbackSlots)
     .map(
       (slot) => `<label class="name-field">#${slot.slot}
@@ -208,20 +221,23 @@ export function livePage({ cleared = false, saved = false, slots = [], error = n
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>扫码评分</title>
+<title>${escapeHtml(board.label)}</title>
 <style>
 body{font-family:system-ui,sans-serif;background:#101820;color:#eef3f7;margin:0;padding:24px}
 main{max-width:1100px;margin:auto}
+.nav{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.nav a{color:#8ac7ff;text-decoration:none}
 .qr-wrap{background:#1b2934;border:2px solid #344a59;border-radius:16px;padding:16px;text-align:center;max-width:280px;margin:8px 0 20px}
 .qr{width:min(100%,220px);aspect-ratio:1;background:#fff;display:block;margin:0 auto 10px;border-radius:8px}
-.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:8px}
+.grid{display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:16px;margin-top:8px}
 .card{background:#1b2934;border:2px solid #344a59;border-radius:16px;padding:20px}
 .num{font-size:2.4rem;font-weight:800}.avg{font-size:2.1rem;color:#65dcbd;font-weight:800;margin:8px 0}
 .detail{font-size:1rem;color:#a9b8c4}#status{min-height:1.5em;color:#a9b8c4}
 .admin{margin-top:28px;padding-top:18px;border-top:1px solid #344a59}
-.name-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:end;margin-bottom:16px}
+.name-form{display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:12px;align-items:end;margin-bottom:16px}
 .name-field{display:grid;gap:6px;color:#c5d5e3;font-weight:600}
-.name-field input{width:100%;box-sizing:border-box;padding:10px 12px;border:2px solid #648094;border-radius:10px;background:#101820;color:#fff;font-size:1.05rem}
+.name-field input,.title-field input{width:100%;box-sizing:border-box;padding:10px 12px;border:2px solid #648094;border-radius:10px;background:#101820;color:#fff;font-size:1.05rem}
+.title-field{display:grid;gap:6px;color:#c5d5e3;font-weight:600;margin-bottom:14px}
 .name-form button{grid-column:1/-1;justify-self:start;padding:10px 16px;font-size:1rem}
 button{padding:10px 16px;font-size:1rem}
 .ok{color:#65dcbd}.error{color:#ff8f8f}
@@ -229,22 +245,29 @@ button{padding:10px 16px;font-size:1rem}
 @media(max-width:480px){.grid,.name-form{grid-template-columns:1fr}}
 </style>
 </head>
-<body><main>
+<body data-live-api="${paths.liveApi}"><main>
+<nav class="nav">
+  <strong>${escapeHtml(board.label)}</strong>
+  <a href="${otherPaths.admin}">切换到${escapeHtml(other.label)}</a>
+</nav>
 <section class="qr-wrap">
-  <img class="qr" src="/qr" alt="统一评分二维码">
-  <p class="detail">扫码后选择给谁打分</p>
+  <img class="qr" src="${paths.qr}" alt="${escapeHtml(board.label)}二维码">
+  <p class="detail">扫码进入「${escapeHtml(title)}」</p>
 </section>
 <p id="status">正在读取…</p>
 ${cleared ? `<p class="ok">已清空全部评分</p>` : ""}
-${saved ? `<p class="ok">名称已保存</p>` : ""}
+${saved ? `<p class="ok">配置已保存</p>` : ""}
 ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
 <section class="grid" id="cards"></section>
 <section class="admin">
-<form class="name-form" method="post" action="/codes">
+<form class="name-form" method="post" action="${paths.codes}">
+  <label class="title-field" style="grid-column:1/-1">扫码页标题
+    <input name="rate_title" type="text" maxlength="32" required value="${escapeHtml(title)}">
+  </label>
   ${nameFields}
-  <button type="submit">保存名称</button>
+  <button type="submit">保存配置</button>
 </form>
-<form id="clear-scores" method="post" action="/scores/clear">
+<form id="clear-scores" method="post" action="${paths.clear}">
   <button type="submit">清空全部评分</button>
 </form>
 </section>

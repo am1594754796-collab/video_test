@@ -70,7 +70,7 @@
         markDone(data.scoredSlot || slot, "已提交，不能再次评分");
         setGlobal(data.notice || "提交成功", "");
         if (data.done || remainingOpen() === 0) {
-          setGlobal("六人已全部评完，感谢参与", "");
+          setGlobal("已全部评完，感谢参与", "");
         }
       } catch {
         if (msg) {

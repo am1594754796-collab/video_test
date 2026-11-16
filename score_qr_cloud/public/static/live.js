@@ -35,7 +35,8 @@ function render(rows) {
 
 async function load() {
   try {
-    const response = await fetch("/api/live-scores", { cache: "no-store" });
+    const api = document.body?.dataset?.liveApi || "/api/live-scores";
+    const response = await fetch(api, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     const serialized = JSON.stringify(data.rows);

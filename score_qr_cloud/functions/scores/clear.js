@@ -1,12 +1,3 @@
-import { ensureSchema } from "../_lib/db.js";
-import { redirect } from "../_lib/http.js";
+import { createClearPost } from "../_lib/handlers.js";
 
-export async function onRequestPost(context) {
-  const { env } = context;
-  await ensureSchema(env.DB);
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM scores"),
-    env.DB.prepare("DELETE FROM score_voters"),
-  ]);
-  return redirect("/?cleared=1");
-}
+export const onRequestPost = createClearPost("main");

@@ -1,7 +1,10 @@
-export const SLOT_COUNT = 6;
+export const SLOT_COUNT = 6; // legacy default (main board)
 export const SCORE_MIN = 0;
 export const SCORE_MAX = 100;
 export const COMMENT_MAX = 200;
+export const DEFAULT_RATE_TITLE = "扫码评分";
+export const RATE_TITLE_KEY = "rate_title"; // legacy; prefer rate_title:main
+export const RATE_TITLE_MAX = 32;
 export const DEVICE_COOKIE = "score_qr_device";
 export const DEVICE_RE = /^[A-Za-z0-9_-]{32,64}$/;
 export const DEVICE_COOKIE_AGE = 365 * 24 * 60 * 60;
