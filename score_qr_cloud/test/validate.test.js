@@ -62,25 +62,24 @@ test("live board keeps shared QR, six name editors, and clear control", () => {
   assert.doesNotMatch(live, /admin_token|管理口令/);
 });
 
-test("shared rating page walks six people in order with auto-slide script", () => {
+test("shared rating page lists six people with own score inputs", () => {
   const slots = sixCodes.map((code, i) => ({ slot: i + 1, code, name: sixNames[i] }));
   const rate = ratePage({
     slots,
     scoredSlots: [1, 2],
-    currentSlot: slots[2],
-    selectedScore: "",
+    notice: null,
     error: null,
-    notice: "已给 乙 打分，请继续给 丙",
   });
-  assert.match(rate, /提交后下一位自动滑到中间/);
-  assert.match(rate, /pick-viewport/);
-  assert.match(rate, /pick-track/);
-  assert.match(rate, /id="slot-input" value="3"/);
-  assert.match(rate, /提交并下一位/);
-  assert.match(rate, /已给 乙 打分，请继续给 丙/);
+  assert.match(rate, /每人单独打分提交/);
+  assert.match(rate, /id="person-list"/);
+  assert.match(rate, /已提交，不能再次评分/);
+  assert.match(rate, /name="score"/);
   assert.match(rate, /\/static\/rate\.js/);
-  assert.match(rate, /id="rate-config"/);
+  for (let i = 3; i <= 6; i++) {
+    assert.match(rate, new RegExp(`name="slot" value="${i}"`));
+    assert.match(rate, new RegExp(`id="score-${i}"`));
+  }
+  assert.doesNotMatch(rate, /name="slot" value="1"/);
+  assert.doesNotMatch(rate, /name="slot" value="2"/);
   for (const name of sixNames) assert.match(rate, new RegExp(name));
-  assert.match(rate, /class="dot done"/);
-  assert.match(rate, /class="dot on"/);
 });

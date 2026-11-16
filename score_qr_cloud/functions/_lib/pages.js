@@ -90,47 +90,38 @@ ${lookupBlock}
 </html>`;
 }
 
-export function ratePage({
-  slots,
-  scoredSlots = [],
-  currentSlot,
-  selectedScore = "",
-  error = null,
-  notice = null,
-}) {
+export function ratePage({ slots, scoredSlots = [], error = null, notice = null }) {
   const labelOf = (slot) => escapeHtml(slot.name || `${slot.slot}号`);
   const scored = new Set((scoredSlots || []).map(Number));
-  const current = currentSlot || slots.find((slot) => !scored.has(slot.slot)) || slots[0];
-  const currentIndex = Math.max(
-    0,
-    slots.findIndex((slot) => String(slot.slot) === String(current?.slot)),
-  );
-  const slides = slots
+  const rows = slots
     .map((slot) => {
       const done = scored.has(slot.slot);
-      const active = String(slot.slot) === String(current.slot);
-      const state = done ? "done" : active ? "active" : "locked";
-      const hint = done ? "已评分" : active ? "请打分" : "请先完成前面的";
-      return `<div class="pick ${state}" data-slot="${slot.slot}">
-        <span class="pick-num">#${slot.slot}</span>
-        <span class="pick-name">${labelOf(slot)}</span>
-        <span class="pick-hint">${hint}</span>
-      </div>`;
+      if (done) {
+        return `<article class="person done" data-slot="${slot.slot}" id="person-${slot.slot}">
+          <div class="person-head">
+            <span class="pick-num">#${slot.slot}</span>
+            <span class="pick-name">${labelOf(slot)}</span>
+          </div>
+          <p class="done-text">已提交，不能再次评分</p>
+        </article>`;
+      }
+      return `<article class="person" data-slot="${slot.slot}" id="person-${slot.slot}">
+        <div class="person-head">
+          <span class="pick-num">#${slot.slot}</span>
+          <span class="pick-name">${labelOf(slot)}</span>
+        </div>
+        <form class="person-form" method="post" data-slot="${slot.slot}">
+          <input type="hidden" name="slot" value="${slot.slot}">
+          <label class="score-label" for="score-${slot.slot}">分数（0–100）</label>
+          <div class="score-row">
+            <input id="score-${slot.slot}" name="score" type="number" inputmode="numeric" min="0" max="100" step="1" required>
+            <button type="submit">提交</button>
+          </div>
+          <p class="row-msg" hidden></p>
+        </form>
+      </article>`;
     })
     .join("");
-  const dots = slots
-    .map((slot, index) => {
-      const done = scored.has(slot.slot);
-      const on = index === currentIndex;
-      const cls = `dot${done ? " done" : ""}${on ? " on" : ""}`;
-      return `<span class="${cls}" data-slot="${slot.slot}" title="${labelOf(slot)}"></span>`;
-    })
-    .join("");
-  const config = JSON.stringify({
-    slots: slots.map((slot) => ({ slot: slot.slot, name: slot.name || `${slot.slot}号` })),
-    scoredSlots: [...scored],
-    currentSlot: current.slot,
-  }).replace(/</g, "\\u003c");
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -138,70 +129,46 @@ export function ratePage({
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>扫码评分</title>
 <style>
-  body { font-family: sans-serif; text-align: center; padding: 20px 12px; color: #17212b; background: #f5f8fc; }
-  form { max-width: 420px; margin: 16px auto; padding: 20px; background: white; border-radius: 18px; box-shadow: 0 8px 28px #14243a18; }
-  .field { margin: 0 0 12px; text-align: left; }
-  .field label { display: block; margin-bottom: 8px; font-size: 1.2rem; font-weight: 800; }
-  .notice { color: #0f7a5a; font-weight: 700; margin: 0 0 12px; min-height: 1.4em; }
-  .error { color: #b42318; font-weight: 700; margin: 0 0 12px; min-height: 1.4em; }
-  .picker { margin-bottom: 18px; }
-  .picker-tip { margin: 0 0 10px; color: #5a6f86; font-size: 0.95rem; }
-  .pick-wrap { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
-  .pick-viewport {
-    height: 280px; overflow: hidden; position: relative;
-    border-radius: 18px;
-    mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
-    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+  body { font-family: sans-serif; text-align: center; padding: 20px 12px 40px; color: #17212b; background: #f5f8fc; }
+  main { max-width: 440px; margin: 0 auto; }
+  h1 { margin: 0 0 8px; }
+  .tip { color: #5a6f86; margin: 0 0 16px; }
+  .notice { color: #0f7a5a; font-weight: 700; margin: 0 0 12px; }
+  .error { color: #b42318; font-weight: 700; margin: 0 0 12px; }
+  .list { display: grid; gap: 12px; }
+  .person {
+    text-align: left; padding: 16px; border: 2px solid #c5d5e8; border-radius: 16px; background: #fff;
+    box-shadow: 0 6px 18px #14243a12;
   }
-  .pick-track { display: flex; flex-direction: column; will-change: transform; }
-  .pick {
-    flex: 0 0 160px; height: 160px; box-sizing: border-box;
-    display: grid; gap: 8px; place-items: center; padding: 20px 16px; margin: 0 2px;
-    border: 3px solid #c5d5e8; border-radius: 18px; background: #f8fbff;
-    transform: scale(0.92); opacity: 0.45; transition: transform .35s ease, opacity .35s ease, border-color .35s ease, background .35s ease;
+  .person.done { border-color: #65dcbd; background: #eefbf6; }
+  .person-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+  .pick-num { color: #5a6f86; font-weight: 700; }
+  .pick-name { font-size: 1.45rem; font-weight: 800; color: #142c4c; word-break: break-word; }
+  .score-label { display: block; margin-bottom: 8px; font-weight: 700; }
+  .score-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+  .score-row input {
+    box-sizing: border-box; width: 100%; min-height: 52px; padding: 8px 12px;
+    border: 2px solid #2870d5; border-radius: 12px; font-size: 1.5rem; font-weight: 700; color: #142c4c;
   }
-  .pick.active { border-color: #1765ce; background: #e8f1fc; transform: scale(1); opacity: 1; }
-  .pick.done { border-color: #65dcbd; background: #eefbf6; }
-  .pick-num { font-size: 1rem; color: #5a6f86; font-weight: 700; }
-  .pick-name { font-size: 2rem; font-weight: 800; color: #142c4c; word-break: break-word; }
-  .pick-hint { font-size: 0.85rem; color: #7a8fa3; }
-  .dots { display: flex; flex-direction: column; gap: 10px; justify-content: center; padding: 4px 0; }
-  .dot {
-    width: 12px; height: 12px; border-radius: 50%; background: #c5d5e8;
-    transition: background .15s, transform .15s, box-shadow .15s;
+  .score-row button {
+    min-width: 96px; border: 0; border-radius: 12px; background: #1765ce; color: #fff;
+    font-size: 1.05rem; font-weight: 700; cursor: pointer;
   }
-  .dot.done { background: #65dcbd; }
-  .dot.on {
-    background: #1765ce; transform: scale(1.35);
-    box-shadow: 0 0 0 3px #1765ce33;
-  }
-  .field input[type=number] { box-sizing: border-box; width: 100%; min-height: 64px; padding: 10px 16px; border: 3px solid #2870d5; border-radius: 12px; background: #fff; color: #142c4c; font-size: 2rem; font-weight: 700; }
-  input[type=text] { box-sizing: border-box; width: 100%; padding: 12px; font-size: 1rem; }
-  button[type=submit] { width: 100%; min-height: 58px; border: 0; border-radius: 12px; background: #1765ce; color: white; font-size: 1.3rem; font-weight: 700; }
-  button[type=submit]:disabled { opacity: 0.6; }
+  .score-row button:disabled { opacity: 0.55; cursor: not-allowed; }
+  .done-text { margin: 0; color: #0f7a5a; font-weight: 700; }
+  .row-msg { margin: 8px 0 0; font-size: 0.95rem; }
+  .row-msg.ok { color: #0f7a5a; }
+  .row-msg.err { color: #b42318; }
 </style>
 </head>
 <body>
-<h1>扫码评分</h1>
-<p class="notice" id="rate-notice" ${notice ? "" : "hidden"}>${notice ? escapeHtml(notice) : ""}</p>
-<p class="error" id="rate-error" ${error ? "" : "hidden"}>${error ? escapeHtml(error) : ""}</p>
-<form method="post" id="rate-form">
-  <div class="picker">
-    <p class="field"><label id="current-label">当前：${labelOf(current)}（${currentIndex + 1}/${slots.length}）</label></p>
-    <p class="picker-tip">按顺序打分，提交后下一位自动滑到中间；已评过的不能返回</p>
-    <div class="pick-wrap">
-      <div class="pick-viewport">
-        <div class="pick-track" id="pick-track">${slides}</div>
-      </div>
-      <div class="dots" id="pick-dots">${dots}</div>
-    </div>
-  </div>
-  <input type="hidden" name="slot" id="slot-input" value="${current.slot}">
-  <div class="field"><label for="score">分数（0–100）</label><input id="score" name="score" type="number" inputmode="numeric" min="0" max="100" step="1" value="${escapeHtml(selectedScore || "")}" required autofocus></div>
-  <p><input id="comment" type="text" name="comment" maxlength="200" placeholder="备注（可选）"></p>
-  <button type="submit">提交并下一位</button>
-</form>
-<script type="application/json" id="rate-config">${config}</script>
+<main>
+  <h1>扫码评分</h1>
+  <p class="tip">上下共 ${slots.length} 人，每人单独打分提交；同一编号只能提交一次</p>
+  ${notice ? `<p class="notice" id="rate-notice">${escapeHtml(notice)}</p>` : `<p class="notice" id="rate-notice" hidden></p>`}
+  ${error ? `<p class="error" id="rate-error">${escapeHtml(error)}</p>` : `<p class="error" id="rate-error" hidden></p>`}
+  <section class="list" id="person-list">${rows}</section>
+</main>
 <script src="/static/rate.js"></script>
 </body>
 </html>`;
