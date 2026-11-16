@@ -1,4 +1,4 @@
-export const SLOT_COUNT = 2;
+export const SLOT_COUNT = 6;
 export const SCORE_MIN = 0;
 export const SCORE_MAX = 100;
 export const COMMENT_MAX = 200;

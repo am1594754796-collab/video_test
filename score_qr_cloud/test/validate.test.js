@@ -4,29 +4,32 @@ import { parseCodes, parseNames, parseSubmission, validCode } from "../functions
 import { livePage, ratePage } from "../functions/_lib/pages.js";
 import { SLOT_COUNT } from "../functions/_lib/constants.js";
 
-test("accepts two unique codes including unicode", () => {
-  const parsed = parseCodes(["甲", "乙"]);
-  assert.deepEqual(parsed.codes, ["甲", "乙"]);
+const sixCodes = ["1", "2", "3", "4", "5", "6"];
+const sixNames = ["甲", "乙", "丙", "丁", "戊", "己"];
+
+test("accepts six unique codes including unicode", () => {
+  const parsed = parseCodes(["甲", "乙", "丙", "丁", "戊", "己"]);
+  assert.deepEqual(parsed.codes, ["甲", "乙", "丙", "丁", "戊", "己"]);
 });
 
 test("rejects duplicate codes", () => {
-  const parsed = parseCodes(["1", "1"]);
+  const parsed = parseCodes(["1", "1", "3", "4", "5", "6"]);
   assert.equal(parsed.error, "编号不能重复。");
 });
 
 test("rejects wrong slot count", () => {
-  const parsed = parseCodes(["1", "2", "3"]);
-  assert.match(parsed.error, /正好 2/);
+  const parsed = parseCodes(["1", "2"]);
+  assert.match(parsed.error, /正好 6/);
 });
 
 test("parses display names", () => {
-  const parsed = parseNames(["张三", "李四"]);
-  assert.deepEqual(parsed.names, ["张三", "李四"]);
+  const parsed = parseNames(sixNames);
+  assert.deepEqual(parsed.names, sixNames);
 });
 
 test("rejects blank or duplicate names", () => {
-  assert.match(parseNames(["", "李四"]).error, /1–32/);
-  assert.equal(parseNames(["同名", "同名"]).error, "名称不能重复。");
+  assert.match(parseNames(["", "乙", "丙", "丁", "戊", "己"]).error, /1–32/);
+  assert.equal(parseNames(["同名", "同名", "丙", "丁", "戊", "己"]).error, "名称不能重复。");
 });
 
 test("parses valid score", () => {
@@ -46,32 +49,38 @@ test("validCode matches length rules", () => {
   assert.equal(validCode(""), false);
 });
 
-test("live board keeps shared QR, name editors, and clear control", () => {
-  assert.equal(SLOT_COUNT, 2);
-  const live = livePage({
-    cleared: false,
-    slots: [
-      { slot: 1, name: "张三" },
-      { slot: 2, name: "李四" },
-    ],
-  });
+test("live board keeps shared QR, six name editors, and clear control", () => {
+  assert.equal(SLOT_COUNT, 6);
+  const slots = sixNames.map((name, i) => ({ slot: i + 1, name }));
+  const live = livePage({ cleared: false, slots });
   assert.match(live, /id="cards"/);
   assert.match(live, /src="\/qr"/);
-  assert.match(live, /name="name1"/);
-  assert.match(live, /name="name2"/);
-  assert.match(live, /value="张三"/);
+  for (let i = 1; i <= 6; i++) assert.match(live, new RegExp(`name="name${i}"`));
+  assert.match(live, /value="甲"/);
   assert.match(live, /保存名称/);
   assert.match(live, /清空全部评分/);
   assert.doesNotMatch(live, /admin_token|管理口令/);
 });
 
-test("shared rating page shows configured names", () => {
-  const slots = [
-    { slot: 1, code: "1", name: "张三" },
-    { slot: 2, code: "2", name: "李四" },
-  ];
-  const rate = ratePage({ slots, selectedSlot: "", selectedScore: "", error: null, lockedSlot: null });
-  assert.match(rate, /选择给谁打分/);
-  assert.match(rate, /张三/);
-  assert.match(rate, /李四/);
+test("shared rating page walks six people in order with auto-slide script", () => {
+  const slots = sixCodes.map((code, i) => ({ slot: i + 1, code, name: sixNames[i] }));
+  const rate = ratePage({
+    slots,
+    scoredSlots: [1, 2],
+    currentSlot: slots[2],
+    selectedScore: "",
+    error: null,
+    notice: "已给 乙 打分，请继续给 丙",
+  });
+  assert.match(rate, /提交后下一位自动滑到中间/);
+  assert.match(rate, /pick-viewport/);
+  assert.match(rate, /pick-track/);
+  assert.match(rate, /id="slot-input" value="3"/);
+  assert.match(rate, /提交并下一位/);
+  assert.match(rate, /已给 乙 打分，请继续给 丙/);
+  assert.match(rate, /\/static\/rate\.js/);
+  assert.match(rate, /id="rate-config"/);
+  for (const name of sixNames) assert.match(rate, new RegExp(name));
+  assert.match(rate, /class="dot done"/);
+  assert.match(rate, /class="dot on"/);
 });

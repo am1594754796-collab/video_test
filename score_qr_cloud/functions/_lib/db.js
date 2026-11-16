@@ -122,6 +122,12 @@ export async function alreadyScored(db, deviceId, code) {
   return Boolean(row);
 }
 
+/** Codes this device has already scored. */
+export async function scoredCodesForDevice(db, deviceId) {
+  const { results } = await db.prepare("SELECT code FROM scores WHERE device_id = ?").bind(deviceId).all();
+  return new Set((results ?? []).map((row) => row.code));
+}
+
 export async function recentScores(db, limit = 20) {
   const { results } = await db
     .prepare("SELECT code, score, comment, submit_time FROM scores ORDER BY id DESC LIMIT ?")
